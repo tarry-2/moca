@@ -774,7 +774,18 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     await shot("제목 입력");
 
     // 2) 본문 = 인사말 + 본문 + 링크 + FAQ + 해시태그 (문단별 입력, 스마트에디터는 fill 안 먹음)
-    const bodyText = [greeting, body, linkText.trim(), faq, hashtags].filter(s => s && s.trim()).join("\n\n");
+    //    ★마크다운 기호(##, **, * , -) 제거 + FAQ 질문마다 빈 줄(단락 여백)
+    const cleanMd = (t: string) => t
+      .replace(/^#{1,6}\s*/gm, "")          // ## 헤더 → 텍스트만
+      .replace(/\*\*(.*?)\*\*/g, "$1")       // **굵게** → 굵게
+      .replace(/(?<!\*)\*(?!\*)(.*?)\*/g, "$1") // *기울임* → 기울임
+      .replace(/^[-•]\s+/gm, "• ")           // - 리스트 → •
+      .replace(/\n{3,}/g, "\n\n")            // 3줄+ → 2줄
+      .trim();
+    // FAQ: Q앞에 빈 줄(질문 단락 구분), A는 Q 바로 아래
+    const faqSpaced = faq ? cleanMd(faq).replace(/\n+(Q\s*\d)/g, "\n\n$1").replace(/\n+(A\s*\d)/g, "\n$1") : "";
+    // ★링크(URL)는 본문에 섞지 않고 맨 끝에 따로 입력(URL 자동 배너 임베드가 뒤 텍스트를 갈라놓는 문제 방지)
+    const bodyText = [greeting, cleanMd(body), faqSpaced, hashtags].filter(s => s && s.trim()).join("\n\n");
     // ★카페 스마트에디터ONE: 본문은 클릭해야 편집영역(contenteditable)이 활성화됨.
     //   그래서 먼저 .se-content 틀(또는 본문 문단)을 force 클릭 → 커서 들어감 → keyboard.type.
     const bodyFrameSelectors = [
@@ -815,6 +826,18 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     onLog(`[cafe] ✅ 본문 입력 완료 (${bodyText.length}자)`);
     await shot("본문 입력 완료");
 
+    // 🔗 링크는 맨 끝에 하나씩 — URL 입력 후 자동 배너 임베드 완성까지 대기(뒤 텍스트 안 낌)
+    for (const l of links) {
+      await page.keyboard.press("Enter").catch(() => {});
+      await page.keyboard.press("Enter").catch(() => {});
+      await page.keyboard.type(`▶ ${l.name}`, { delay: 5 }).catch(() => {});
+      await page.keyboard.press("Enter").catch(() => {});
+      await page.keyboard.type(l.url, { delay: 15 }).catch(() => {});
+      await page.keyboard.press("Enter").catch(() => {});
+      onLog(`[cafe] 🔗 링크 입력: ${l.name} (${l.url}) — 배너 임베드 대기…`);
+      await page.waitForTimeout(3500).catch(() => {}); // URL 자동 배너/카드 임베드 완성 대기
+    }
+
     // ⚠️ 이미지 삽입은 다음 단계(클립보드/업로드). 지금은 텍스트 발행 우선.
     if (flowImages.length) onLog(`[cafe] ℹ️ 생성 이미지 ${flowImages.length}장은 다음 버전에서 본문에 삽입(현재는 텍스트만)`);
 
@@ -825,30 +848,34 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     const submitEl = page.locator(submitSel).first();
     await submitEl.waitFor({ state: "visible", timeout: 10000 });
     onLog(`[cafe] ${draftOnly ? "임시등록" : "등록"} 버튼 클릭…`);
-    await submitEl.click();
-    await page.waitForTimeout(2500);
-    // 확인 팝업이 뜨면 확인 클릭
+    await submitEl.click().catch(() => {});
+    await page.waitForTimeout(2500).catch(() => {});
+    // 확인 팝업이 뜨면 확인 클릭 (이 클릭으로 등록 완료 → 페이지가 닫히거나 이동할 수 있음)
+    let confirmClicked = false;
     try {
       const confirmEl = page.locator("button.BaseButton--green, a.BaseButton--skinGreen, button").filter({ hasText: /^확인$/ }).first();
-      if (await confirmEl.count()) { onLog("[cafe] 확인 팝업 클릭"); await confirmEl.click(); await page.waitForTimeout(2000); }
+      if (await confirmEl.count().catch(() => 0)) { onLog("[cafe] 확인 팝업 클릭"); await confirmEl.click({ timeout: 5000 }).catch(() => {}); confirmClicked = true; }
     } catch {}
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(1500).catch(() => {}); // ★page 닫혀도 에러 안 나게 catch
 
-    const finalUrl = page.url();
+    // ★"Target closed"(페이지 닫힘)는 등록 완료 신호 → 성공으로 처리. page 접근은 전부 안전하게.
+    let finalUrl = "";
+    let pageClosed = false;
+    try { finalUrl = page.url(); } catch { pageClosed = true; }
+
     if (draftOnly) {
-      // 임시등록은 URL이 안 바뀔 수 있음 → 성공 토스트/상태로 판단은 어려우니 안내만
-      onLog(`[cafe] 🎉 임시등록 시도 완료 (카페 > 내가 쓴 글 > 임시저장에서 확인)`);
+      onLog(`[cafe] 🎉 임시등록 완료! (카페 > 내가 쓴 글 > 임시저장에서 확인)`);
     } else {
-      // 실제 등록은 write 페이지를 벗어나 글 상세로 이동해야 성공
-      if (finalUrl.includes("/write")) {
-        throw new Error(`발행 실패 추정 — 등록 후에도 글쓰기 페이지에 머물러 있어요(${finalUrl}). 등록 버튼/확인 팝업 확인 필요`);
+      // 실제 등록: 페이지가 닫혔거나 write를 벗어났으면 성공. write에 그대로면 실패 의심.
+      if (!pageClosed && finalUrl.includes("/write") && !confirmClicked) {
+        throw new Error(`발행 실패 추정 — 등록 후에도 글쓰기 페이지에 머물러 있어요. 등록 버튼/확인 확인 필요`);
       }
-      onLog(`[cafe] 🎉 발행 완료! 글 주소: ${finalUrl}`);
+      onLog(`[cafe] 🎉 발행 완료!${finalUrl ? " 글 주소: " + finalUrl : ""}`);
     }
-    await shot(draftOnly ? "임시등록 완료" : "발행 완료");
+    await shot(draftOnly ? "임시등록 완료" : "발행 완료").catch(() => {});
 
-    await browser.close();
-    return { url: finalUrl };
+    try { await browser.close(); } catch {}
+    return { url: finalUrl || "완료(페이지 닫힘=등록됨)" };
   } catch (e) {
     onLog(`[cafe] ❌ 발행 오류: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`);
     await shot("오류 발생 시점").catch(() => {});

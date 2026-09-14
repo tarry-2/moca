@@ -69,8 +69,10 @@ export async function generateCafePost(keyword: string, cafeName: string, boardN
    형식: "자주 묻는 질문\nQ1. ...\nA1. ...\nQ2. ...\nA2. ...\nQ3. ...\nA3. ...\nQ4. ...\nA4. ..."
 8) hashtags: 핵심 키워드 "${keyword}" 포함, 관련 검색어 기반 해시태그 5~8개. 형식: "#키워드1 #키워드2 #키워드3 ..."
 
+★★본문·FAQ에 마크다운 기호 절대 쓰지 말 것: ## 제목, **굵게**, * 목록 금지. 소제목은 그냥 텍스트로(이모지 붙여도 됨), 문단은 빈 줄로 구분.
+
 반드시 아래 JSON 형식으로만 답해(다른 말·마크다운 금지):
-{"title":"제목(키워드 포함)","body":"본문(키워드 5~6회, 질문 없이 마무리)","faq":"자주 묻는 질문\\nQ1. ...\\nA1. ...","hashtags":"#${keyword.replace(/\s/g, "")} #관련어1 #관련어2"}`;
+{"title":"제목(키워드 포함)","body":"본문(키워드 5~6회, 마크다운 기호 없이, 질문 없이 마무리)","faq":"자주 묻는 질문\\nQ1. ...\\nA1. ...","hashtags":"#${keyword.replace(/\s/g, "")} #관련어1 #관련어2"}`;
   let raw = await generateText(prompt, onLog);
   raw = raw.replace(/```json/gi, "").replace(/```/g, "").trim(); // 코드펜스 제거(파싱 실패 방지)
   try {
