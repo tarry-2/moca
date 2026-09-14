@@ -877,17 +877,54 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
         }
       }
       if (!uploaded) { onLog(`[cafe] ⚠️ 이미지 업로드 방법 못 찾음 — 이미지 없이 진행`); return; }
+      // ★"사진 첨부 방식" 팝업(개별사진/콜라주/슬라이드) 뜨면 '개별사진' 자동 선택
+      await page.waitForTimeout(1500);
+      try {
+        const picked = await page.evaluate(() => {
+          const vis = (el: Element) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+          // '개별사진' 텍스트 요소 클릭(팝업 안)
+          const el = [...document.querySelectorAll("button,div,span,li,label")].find(e => vis(e) && /개별\s*사진/.test((e.textContent || "").trim()) && (e.textContent || "").trim().length < 12);
+          if (el) { (el as HTMLElement).click(); return true; }
+          return false;
+        });
+        if (picked) { onLog("[cafe] 사진 첨부 방식 '개별사진' 자동 선택"); await page.waitForTimeout(1000); }
+      } catch {}
       await page.waitForTimeout(2000 + files.length * 3500); // 장수만큼 업로드 대기
       const imgCnt = await page.locator(".se-component.se-image, .se-image").count().catch(() => 0);
       onLog(`[cafe] ✅ 이미지 업로드 완료(에디터 이미지 ${imgCnt}개 감지)`);
     };
 
-    // ① 인사말+본문 입력
-    await typeText(mainText);
+    // ★배치(테리 확정): 썸네일(첫 이미지) → 인사말 → [이미지 → 글] 반복 → FAQ+해시태그
+    //   즉 각 구간은 '이미지 먼저, 그 다음 글'. 인사말은 맨 위(썸네일 다음).
+    const allParas = mainText.split(/\n\n+/).filter(p => p.trim());
+    // 인사말이 있으면 첫 문단(인사말)은 썸네일 바로 아래로 분리
+    const greetPara = greeting.trim() ? allParas.shift() : null; // mainText 맨앞=인사말
+    if (imgFiles.length) {
+      // 1) 썸네일(첫 이미지) 맨 위
+      await uploadImages([imgFiles[0]]);
+      await page.keyboard.press("Enter").catch(() => {});
+      // 2) 인사말
+      if (greetPara) { await typeText(greetPara); await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); }
+      // 3) 나머지 이미지들을 문단 앞에 배치: [이미지 → 글] 반복
+      const rest = imgFiles.slice(1);
+      const gap = rest.length ? Math.max(1, Math.floor(allParas.length / rest.length)) : allParas.length + 1;
+      let imgIdx = 0;
+      for (let p = 0; p < allParas.length; p++) {
+        // 구간 시작마다 이미지 먼저(이미지 → 글)
+        if (imgIdx < rest.length && p % gap === 0) {
+          await uploadImages([rest[imgIdx++]]);
+          await page.keyboard.press("Enter").catch(() => {});
+        }
+        await typeText(allParas[p]);
+        await page.keyboard.press("Enter").catch(() => {});
+        await page.keyboard.press("Enter").catch(() => {});
+      }
+      while (imgIdx < rest.length) { await uploadImages([rest[imgIdx++]]); await page.keyboard.press("Enter").catch(() => {}); }
+    } else {
+      await typeText(mainText);
+    }
     await page.waitForTimeout(400);
-    // ② 이미지 업로드(본문 끝)
-    if (imgFiles.length) { await page.keyboard.press("Enter").catch(() => {}); await uploadImages(imgFiles); }
-    // ③ FAQ+해시태그 입력(이미지 아래)
+    // FAQ+해시태그(맨 아래, 이미지 없음)
     if (tailText) { await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); await typeText(tailText); }
 
     await page.waitForTimeout(500);
@@ -3055,7 +3092,7 @@ export async function generateFlowImagesCDP(params: {
         for (const sel of ["button[aria-label='설정']", "button[aria-label='에이전트 요청 사항']", "button:has-text('tune')"]) {
           try { const el = page.locator(sel).first(); if (await el.count() > 0 && await el.isVisible().catch(() => false)) { await el.click({ timeout: 3000 }); await page.waitForTimeout(900); opened = true; break; } } catch {}
         }
-        if (!opened) return;
+        if (!opened) return false;
         // 패널 안에서 '안 함'(생성 전 확인) 선택 + 'x1'(이미지 기본값) 선택 → '저장'
         const done = await page.evaluate(() => {
           const vis = (el: Element) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
