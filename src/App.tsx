@@ -4,6 +4,7 @@
 // 테마: 다크/라이트 CSS 변수 토글(로그인·대시보드·로그콘솔 전부 연동).
 import { useEffect, useState } from "react";
 import LogConsole from "./components/LogConsole";
+import AccountsTab from "./components/AccountsTab";
 import { useLog } from "./lib/useLog";
 
 // 임시 관리자 게이트. TODO(STEP1): Supabase moca_admins 테이블 인증으로 교체.
@@ -135,6 +136,14 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
   const log = useLog();
   const [showWindow, setShowWindow] = useState(false);
   const [tab, setTab] = useState("write");
+  const [selectedAccs, setSelectedAccs] = useState<Set<string>>(new Set());
+  const toggleAcc = (id: string) =>
+    setSelectedAccs((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
 
   function demoLog() {
     const acc = "chn25724";
@@ -191,13 +200,21 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
           <h2 style={{ color: "var(--m-text)", fontSize: 20, marginBottom: 6 }}>
             {TABS.find((t) => t.k === tab)?.ico} {TABS.find((t) => t.k === tab)?.label}
           </h2>
-          <p style={{ color: "var(--m-sub)", fontSize: 13, lineHeight: 1.6, marginBottom: 18 }}>
-            {tab === "write" ? "카페·게시판을 고르고 AI가 글을 써서 자동 발행해요. 진행은 오른쪽 로그에 세세히 떠요." : "이 기능은 준비 중이에요 (STEP 로드맵 순서대로 구현)."}
-          </p>
-          {tab === "write" && (
-            <button className="moca-primary" onClick={demoLog} style={{ background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 10, padding: "13px 20px", fontSize: 15, fontWeight: 800, cursor: "pointer" }}>
-              ▶ 로그 데모 실행 (동작 확인용)
-            </button>
+          {tab === "accounts" ? (
+            <AccountsTab selected={selectedAccs} onToggle={toggleAcc} log={log} />
+          ) : (
+            <>
+              <p style={{ color: "var(--m-sub)", fontSize: 13, lineHeight: 1.6, marginBottom: 18 }}>
+                {tab === "write"
+                  ? `카페·게시판을 고르고 AI가 글을 써서 자동 발행해요. 진행은 오른쪽 로그에 세세히 떠요.${selectedAccs.size ? ` (선택된 계정 ${selectedAccs.size}개)` : " ← 먼저 '카페 계정' 탭에서 계정을 선택하세요."}`
+                  : "이 기능은 준비 중이에요 (STEP 로드맵 순서대로 구현)."}
+              </p>
+              {tab === "write" && (
+                <button className="moca-primary" onClick={demoLog} style={{ background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 10, padding: "13px 20px", fontSize: 15, fontWeight: 800, cursor: "pointer" }}>
+                  ▶ 로그 데모 실행 (동작 확인용)
+                </button>
+              )}
+            </>
           )}
         </div>
 
