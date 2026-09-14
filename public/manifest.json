@@ -1,0 +1,17 @@
+{
+  "name": "MOCA - 네이버 카페 자동화",
+  "short_name": "MOCA",
+  "description": "MOCA (Marketing On CAfe) — 네이버 카페 글쓰기·활동·홍보·관리 자동화",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#16110d",
+  "theme_color": "#6f4e37",
+  "orientation": "any",
+  "icons": [
+    { "src": "/icon-192.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any maskable" },
+    { "src": "/icon-512.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any maskable" }
+  ],
+  "categories": ["productivity", "utilities"],
+  "lang": "ko",
+  "dir": "ltr"
+}
