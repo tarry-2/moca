@@ -2,6 +2,7 @@
 // 토큰(크레딧) 소진 시 다음 계정으로 자동 전환(slot 순서). 다 쓰면 멈추고 로그.
 import { useEffect, useState } from "react";
 import { FlowAccount, listFlowAccounts, addFlowAccount, deleteFlowAccount, setFlowConnected } from "../lib/flowAccounts";
+import { botFetch, BOT_BASE } from "../lib/botApi";
 import type { UseLog } from "../lib/useLog";
 
 const inputStyle: React.CSSProperties = {
@@ -71,6 +72,46 @@ export default function FlowTab({ log }: { log: UseLog }) {
     setBusy(false);
   }
 
+  // 🎨 이미지 생성 테스트 (연결된 계정 순서대로 → 크레딧 소진 시 다음 계정 자동 전환 → 다 쓰면 멈춤)
+  const [testPrompt, setTestPrompt] = useState("맛있는 제철 과일이 예쁘게 담긴 사진, 밝고 자연스러운 조명");
+  const [imgs, setImgs] = useState<{ src: string; alt: string }[]>([]);
+
+  async function generateTest() {
+    const connected = accts.filter((a) => a.connected);
+    if (!connected.length) { log.push("연결된 플로우 계정이 없어요. 먼저 🔗연결(구글 로그인) 하세요", "warn"); return; }
+    setBusy(true);
+    setImgs([]);
+    log.push(`━━ 🎨 이미지 생성 테스트 시작 (연결계정 ${connected.length}개, 1장) ━━`, "sys");
+    let done = false;
+    for (const a of connected) {
+      const port = 9222 + (a.slot ?? 0);
+      log.push(`[slot ${a.slot}] ${a.google_email}로 생성 시도… (포트 ${port})`, "progress");
+      try {
+        const res = await botFetch(`${BOT_BASE}/api/flow-generate`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompts: [testPrompt], captions: ["테스트"], cdpPort: port }),
+        });
+        if (res.status === 402) { // 크레딧 소진/정책 → 다음 계정
+          log.push(`[slot ${a.slot}] ⚠️ 토큰(크레딧) 소진 → 다음 계정으로 넘어가요`, "warn");
+          continue;
+        }
+        const d = await res.json();
+        if (res.ok && d.images?.length) {
+          setImgs(d.images);
+          log.push(`[slot ${a.slot}] ✅ 이미지 ${d.images.length}장 생성 성공!`, "success");
+          done = true;
+          break;
+        } else {
+          log.push(`[slot ${a.slot}] 실패: ${d.error || "이미지 0장"} → 다음 계정`, "error");
+        }
+      } catch (e: any) {
+        log.push(`[slot ${a.slot}] 봇 연결 실패: ${e?.message || e} (데스크톱 앱 필요)`, "error");
+      }
+    }
+    if (!done) log.push("🛑 모든 플로우 계정의 토큰이 소진됐어요. 중단합니다(계정 추가 후 다시 시도).", "error");
+    setBusy(false);
+  }
+
   return (
     <div style={{ maxWidth: 720 }}>
       <style>{`.moca-f-btn:hover{filter:brightness(1.12)} .moca-f-btn:active{transform:scale(.96)} .moca-in:focus{outline:none;border-color:var(--m-gold)}`}</style>
@@ -137,6 +178,25 @@ export default function FlowTab({ log }: { log: UseLog }) {
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+
+      {/* 🎨 이미지 생성 테스트 */}
+      <div style={card}>
+        <b style={{ color: "var(--m-text)", fontSize: 14, fontWeight: 800 }}>🎨 이미지 생성 테스트</b>
+        <p style={{ color: "var(--m-sub)", fontSize: 12, margin: "6px 0 10px", lineHeight: 1.5 }}>
+          연결된 계정으로 이미지 1장을 실제로 만들어봐요. <b style={{ color: "var(--m-gold)" }}>크레딧이 소진되면 자동으로 다음 계정</b>으로 넘어가고, 모두 소진되면 멈춰요.
+        </p>
+        <textarea className="moca-in" style={{ ...inputStyle, minHeight: 60, resize: "vertical", marginBottom: 8 }} value={testPrompt} onChange={(e) => setTestPrompt(e.target.value)} placeholder="어떤 그림? (예: 신선한 과일 사진, 밝은 조명)" />
+        <button className="moca-f-btn" disabled={busy} onClick={generateTest} style={{ background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 9, padding: "11px 20px", fontSize: 14, fontWeight: 800, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+          {busy ? "생성 중…" : "🎨 이미지 생성 테스트"}
+        </button>
+        {imgs.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
+            {imgs.map((im, i) => (
+              <img key={i} src={im.src} alt={im.alt} style={{ width: 160, height: 160, objectFit: "cover", borderRadius: 10, border: "1px solid var(--m-line2)" }} />
+            ))}
           </div>
         )}
       </div>
