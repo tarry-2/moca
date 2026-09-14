@@ -5,6 +5,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# 릴리스(설치본) 생성·업로드에 필요한 쓰기 권한. 신규 레포는 기본 read-only라 없으면
+# "Upload to Release"가 "Resource not accessible by integration"으로 실패한다.
+permissions:
+  contents: write
+
 # 같은 브랜치에서 새 버전이 올라오면 이전 설치 빌드를 중단한다.
 # stable 파일(MOCA-Setup.exe / MOCA-Mac-*.dmg)이 구버전으로 되돌아가는 것을 방지한다.
 concurrency:
