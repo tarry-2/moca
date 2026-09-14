@@ -32,6 +32,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [keyword, setKeyword] = useState("");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
+  const [imgCount, setImgCount] = useState(2); // 플로우로 만들 이미지 장수(0=없음)
   const [busy, setBusy] = useState<string | null>(null);
 
   const accId = [...selected][0];
@@ -98,11 +99,12 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     setBusy("publish");
     log.push(`━━ 🚀 발행 시작: [${cafeName}] ${boardName} ━━`, "sys", cafeName);
     log.push(`제목: ${title}`, "info", cafeName);
+    log.push(`이미지: ${imgCount ? `플로우로 ${imgCount}장 생성` : "없음(글만)"}`, "info", cafeName);
     log.push(`창보기 ${showWindowState ? "ON(크롬 창 뜸)" : "OFF(백그라운드+캡처)"}`, "progress");
     try {
       const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, content, showWindow: showWindowState }),
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, content, imgCount, showWindow: showWindowState }),
       });
       const d = await res.json();
       // 봇 진단 로그를 화면 로그로
@@ -186,9 +188,37 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
         <textarea className="moca-in" style={{ ...inputStyle, minHeight: 220, resize: "vertical", lineHeight: 1.6 }} value={content} onChange={(e) => setContent(e.target.value)} placeholder="본문 (AI 생성 후 편집 가능)" />
       </div>
 
+      {/* ④ 이미지(플로우) 설정 */}
+      <div style={card}>
+        <label style={stepLabel}>④ 🌈 이미지 자동 생성 (플로우)</label>
+        <p style={{ color: "var(--m-sub)", fontSize: 12, margin: "0 0 10px", lineHeight: 1.5 }}>
+          발행할 때 플로우(구글 무료)로 이미지를 만들어 본문에 넣어요. 계정 토큰이 소진되면 다음 플로우 계정으로 자동 전환돼요.
+          <b style={{ color: "var(--m-gold)" }}> (0장이면 이미지 없이 글만 발행)</b>
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ color: "var(--m-sub)", fontSize: 13 }}>이미지 장수:</span>
+          {[0, 1, 2, 3, 4, 5].map((n) => (
+            <button
+              key={n}
+              className="moca-w-btn"
+              onClick={() => setImgCount(n)}
+              style={{
+                width: 42, height: 42, borderRadius: 10, fontSize: 15, fontWeight: 800, cursor: "pointer",
+                background: imgCount === n ? "var(--m-gold)" : "var(--m-tabhover)",
+                color: imgCount === n ? "var(--m-goldink)" : "var(--m-text)",
+                border: "1px solid var(--m-line2)",
+              }}
+            >{n}</button>
+          ))}
+          <span style={{ color: "var(--m-dim)", fontSize: 12.5 }}>
+            {imgCount === 0 ? "글만 발행" : `${imgCount}장 생성`}
+          </span>
+        </div>
+      </div>
+
       {/* 발행 */}
-      <button className="moca-w-btn" onClick={publish} style={{ width: "100%", background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 10, padding: "15px", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>
-        🚀 카페에 발행
+      <button className="moca-w-btn" disabled={busy === "publish"} onClick={publish} style={{ width: "100%", background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 10, padding: "15px", fontSize: 16, fontWeight: 800, cursor: busy === "publish" ? "default" : "pointer", opacity: busy === "publish" ? 0.6 : 1 }}>
+        {busy === "publish" ? "발행 중…" : `🚀 카페에 발행${imgCount ? ` (이미지 ${imgCount}장)` : ""}`}
       </button>
       <p style={{ color: "var(--m-dim)", fontSize: 11.5, textAlign: "center", marginTop: 8 }}>발행봇(에디터 조작 + 창보기/캡처)은 실계정 검증과 함께 연결 예정</p>
     </div>
