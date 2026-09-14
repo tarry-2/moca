@@ -177,7 +177,7 @@ app.post("/api/cafe/boards", async (req, res) => {
 app.post("/api/cafe/publish", async (req, res) => {
   const finishWork = beginWork();
   try {
-    const { userId, cafeId, cafeUrl, menuId, title, body, faq, imgCount, showWindow } = req.body || {};
+    const { userId, cafeId, cafeUrl, menuId, title, greeting, body, links, faq, imgCount, showWindow } = req.body || {};
     if (!userId || !cafeId || !menuId || !title || !body) {
       return res.status(400).json({ success: false, error: "userId, cafeId, menuId, title, body 필요" });
     }
@@ -185,7 +185,7 @@ app.post("/api/cafe/publish", async (req, res) => {
     const shots: { caption: string; dataUrl: string }[] = [];
     try {
       const r = await publishCafe({
-        userId, cafeId, cafeUrl, menuId, title, body, faq, imgCount: Number(imgCount) || 0,
+        userId, cafeId, cafeUrl, menuId, title, greeting, body, links, faq, imgCount: Number(imgCount) || 0,
         showWindow: showWindow === true || showWindow === "true",
         onLog: (m) => { logs.push(m); console.log(m); },
         onShot: (caption, dataUrl) => { shots.push({ caption, dataUrl }); },

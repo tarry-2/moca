@@ -37,6 +37,14 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [imgCount, setImgCount] = useState(2); // 플로우로 만들 이미지 장수(0=없음)
   const [lengthChars, setLengthChars] = useState(1000); // AI 본문 목표 글자수
   const [busy, setBusy] = useState<string | null>(null);
+  // 인사말·링크(저장되는 설정) — 관리자 전용, localStorage 영속
+  const [greeting, setGreeting] = useState(() => localStorage.getItem("moca_greeting") || "");
+  const [savedGreeting, setSavedGreeting] = useState(() => localStorage.getItem("moca_greeting") || "");
+  const [linkName, setLinkName] = useState(() => localStorage.getItem("moca_link_name") || "");
+  const [linkUrl, setLinkUrl] = useState(() => localStorage.getItem("moca_link_url") || "");
+  const [useGreeting, setUseGreeting] = useState(true);
+  const [useLink, setUseLink] = useState(true);
+  const ONPARTNER = { name: "온파트너", url: "https://partner.yuanfnb.com" };
 
   const accId = [...selected][0];
   const cafeName = cafes.find((c) => c.cafeId === cafeId)?.name || "";
@@ -47,6 +55,17 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     setKeySaved(!!keyInput.trim());
     if (keyInput.trim()) setKeyOpen(false); // 저장되면 접기
     log.push("Gemini API 키 저장됨", "info");
+  }
+  function saveGreeting() {
+    const g = greeting.trim();
+    localStorage.setItem("moca_greeting", g);
+    setSavedGreeting(g);
+    log.push(g ? "글쓴이 인사말 저장됨(앞으로 모든 글에 자동 삽입)" : "인사말 비움", "success");
+  }
+  function saveLink() {
+    localStorage.setItem("moca_link_name", linkName.trim());
+    localStorage.setItem("moca_link_url", linkUrl.trim());
+    log.push(linkUrl.trim() ? `내 링크 저장됨: ${linkName.trim() || linkUrl.trim()}` : "내 링크 비움", "success");
   }
 
   async function loadCafes() {
@@ -104,13 +123,18 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     setBusy("publish");
     log.push(`━━ 🚀 발행 시작: [${cafeName}] ${boardName} ━━`, "sys", cafeName);
     log.push(`제목: ${title}`, "info", cafeName);
-    log.push(`구성: 본문 ${body.length}자 → 이미지 ${imgCount}장(본문 끝) → ${faq ? "FAQ(질문형식) 맨 아래" : "FAQ 없음"}`, "info", cafeName);
+    const links = [
+      ...(useLink && linkUrl.trim() ? [{ name: linkName.trim() || linkUrl.trim(), url: linkUrl.trim() }] : []),
+      { name: ONPARTNER.name, url: ONPARTNER.url }, // 온파트너 항상 포함(원하면 아래 토글로 뺄 수 있게 추후)
+    ];
+    log.push(`구성: ${useGreeting && savedGreeting ? "인사말 → " : ""}본문 ${body.length}자 → 이미지 ${imgCount}장(본문 끝) → ${faq ? "FAQ(질문형식) 맨 아래" : "FAQ 없음"}`, "info", cafeName);
+    if (links.length) log.push(`링크 삽입: ${links.map(l => l.name).join(", ")}`, "info", cafeName);
     log.push(`창보기 ${showWindowState ? "ON(크롬 창 뜸)" : "OFF(백그라운드+캡처)"}`, "progress");
     try {
       const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        // body=본문(이미지 여기서 끝), faq=질문형식(이미지 뒤·맨 아래). 봇이 body→이미지→faq 순으로 조립.
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, body, faq, imgCount, showWindow: showWindowState }),
+        // greeting=인사말(맨 위), body=본문(이미지 여기서 끝), links=온파트너/내링크, faq=질문형식(맨 아래).
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, faq, imgCount, showWindow: showWindowState }),
       });
       const d = await res.json();
       // 봇 진단 로그를 화면 로그로
@@ -218,6 +242,42 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
         <textarea className="moca-in" style={{ ...inputStyle, minHeight: 200, resize: "vertical", lineHeight: 1.6 }} value={body} onChange={(e) => setBody(e.target.value)} placeholder="본문 (AI 생성 후 편집 가능)" />
         <label style={{ ...labelStyle, marginTop: 10 }}>❓ 자주 묻는 질문(FAQ) <span style={{ color: "var(--m-dim)" }}>· 검색노출용, 맨 마지막(이미지 아래)에 들어가요</span></label>
         <textarea className="moca-in" style={{ ...inputStyle, minHeight: 130, resize: "vertical", lineHeight: 1.6 }} value={faq} onChange={(e) => setFaq(e.target.value)} placeholder="자주 묻는 질문 Q&A (AI가 자동 생성, 편집 가능)" />
+      </div>
+
+      {/* 💬 글쓴이 인사말 (저장) */}
+      <div style={card}>
+        <label style={stepLabel}>💬 글쓴이 인사말 <span style={{ color: "var(--m-dim)", fontWeight: 400, fontSize: 12 }}>· 한 번 저장하면 모든 글 맨 위에 자동 삽입</span></label>
+        <textarea className="moca-in" style={{ ...inputStyle, minHeight: 70, resize: "vertical", marginBottom: 8 }} value={greeting} onChange={(e) => setGreeting(e.target.value)} placeholder="예: 안녕하세요! 오늘도 유용한 정보 들고 왔어요 😊" />
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button className="moca-w-btn" onClick={saveGreeting} style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>💾 인사말 저장</button>
+          {savedGreeting && <span style={{ color: "var(--m-log-success)", fontSize: 12 }}>✅ 저장됨</span>}
+          <label style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--m-sub)", cursor: "pointer" }}>
+            <input type="checkbox" checked={useGreeting} onChange={(e) => setUseGreeting(e.target.checked)} style={{ width: "auto" }} /> 이 글에 인사말 넣기
+          </label>
+        </div>
+      </div>
+
+      {/* 🔗 링크 (온파트너 + 내 링크) */}
+      <div style={card}>
+        <label style={stepLabel}>🔗 링크 삽입 <span style={{ color: "var(--m-dim)", fontWeight: 400, fontSize: 12 }}>· 본문에 자연스럽게 들어가요</span></label>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, padding: "8px 12px", background: "var(--m-input)", borderRadius: 8, border: "1px solid var(--m-line2)" }}>
+          <span style={{ fontSize: 18 }}>🤝</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: "var(--m-text)", fontSize: 13, fontWeight: 700 }}>온파트너 <span style={{ color: "var(--m-log-success)", fontSize: 11 }}>· 항상 포함</span></div>
+            <div style={{ color: "var(--m-dim)", fontSize: 11 }}>{ONPARTNER.url}</div>
+          </div>
+        </div>
+        <label style={labelStyle}>내 링크 (일반 사이트)</label>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <input className="moca-in" style={{ ...inputStyle, flex: 1 }} value={linkName} onChange={(e) => setLinkName(e.target.value)} placeholder="링크 이름 (예: 내 블로그)" />
+          <input className="moca-in" style={{ ...inputStyle, flex: 2 }} value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} placeholder="https://..." />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button className="moca-w-btn" onClick={saveLink} style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>💾 링크 저장</button>
+          <label style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--m-sub)", cursor: "pointer" }}>
+            <input type="checkbox" checked={useLink} onChange={(e) => setUseLink(e.target.checked)} style={{ width: "auto" }} /> 이 글에 내 링크 넣기
+          </label>
+        </div>
       </div>
 
       {/* ④ 이미지(플로우) 설정 */}
