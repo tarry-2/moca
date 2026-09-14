@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { botFetch, BOT_BASE } from "../lib/botApi";
 import { getGeminiKey, setGeminiKey, generateCafePost } from "../lib/gemini";
+import { listFlowAccounts } from "../lib/flowAccounts";
 import type { UseLog } from "../lib/useLog";
 
 interface MyCafe { cafeId: string; name: string; url: string; }
@@ -127,14 +128,26 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       ...(useLink && linkUrl.trim() ? [{ name: linkName.trim() || linkUrl.trim(), url: linkUrl.trim() }] : []),
       { name: ONPARTNER.name, url: ONPARTNER.url }, // 온파트너 항상 포함(원하면 아래 토글로 뺄 수 있게 추후)
     ];
-    log.push(`구성: ${useGreeting && savedGreeting ? "인사말 → " : ""}본문 ${body.length}자 → 이미지 ${imgCount}장(본문 끝) → ${faq ? "FAQ(질문형식) 맨 아래" : "FAQ 없음"}`, "info", cafeName);
+    // 🌈 이미지: 연결된 플로우 계정 slot 목록(순서대로, 크레딧 소진 시 다음) + 프롬프트 생성
+    let flowSlots: number[] = [];
+    let imgPrompts: string[] = [];
+    if (imgCount > 0) {
+      const flowAccts = await listFlowAccounts().catch(() => []);
+      flowSlots = flowAccts.filter(a => a.connected).map(a => a.slot ?? 0);
+      if (!flowSlots.length) log.push("⚠️ 연결된 플로우 계정이 없어 이미지 없이 글만 발행돼요(플로우 탭에서 연결하세요)", "warn", cafeName);
+      // 이미지 프롬프트 = 제목/키워드 기반 N개(살짝 변형)
+      const angles = ["밝고 자연스러운 사진", "감성적인 분위기의 사진", "깔끔한 클로즈업 사진", "생활감 있는 연출 사진", "따뜻한 색감의 사진"];
+      imgPrompts = Array.from({ length: imgCount }, (_, i) => `${keyword || title} 관련 ${angles[i % angles.length]}, 텍스트 없이`);
+    }
+    log.push(`배치: 제목 → 썸네일 → ${useGreeting && savedGreeting ? "인사말 → " : ""}본문(글·이미지 ${imgCount}장 번갈아) → 본문 끝나면 바로 ${faq ? "❓FAQ" : "(FAQ 없음)"}`, "info", cafeName);
     if (links.length) log.push(`링크 삽입: ${links.map(l => l.name).join(", ")}`, "info", cafeName);
+    if (imgCount > 0) log.push(`이미지: 플로우 계정 ${flowSlots.length}개로 ${imgCount}장 생성(소진 시 다음 계정)`, "info", cafeName);
     log.push(`창보기 ${showWindowState ? "ON(크롬 창 뜸)" : "OFF(백그라운드+캡처)"}`, "progress");
     try {
       const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        // greeting=인사말(맨 위), body=본문(이미지 여기서 끝), links=온파트너/내링크, faq=질문형식(맨 아래).
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, faq, imgCount, showWindow: showWindowState }),
+        // greeting=인사말(맨 위), body=본문(글·이미지 번갈아), links=온파트너/내링크, faq=질문형식(맨 아래).
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, faq, imgCount, imgPrompts, flowSlots, showWindow: showWindowState }),
       });
       const d = await res.json();
       // 봇 진단 로그를 화면 로그로

@@ -640,16 +640,45 @@ export interface PublishCafeParams {
   links?: { name: string; url: string }[]; // 온파트너/내 링크(본문에 삽입)
   faq?: string;       // 자주 묻는 질문(질문형식) — 이미지 뒤·맨 마지막
   imgCount?: number;  // 플로우로 만들 이미지 장수(본문 끝에 삽입)
+  imgPrompts?: string[]; // 이미지 생성 프롬프트(imgCount개)
+  flowSlots?: number[];  // 사용할 플로우 계정 slot 목록(순서대로, 크레딧 소진 시 다음)
   showWindow?: boolean;
   onShot?: (caption: string, dataUrl: string) => void;
   onLog?: (msg: string) => void;
 }
 
 export async function publishCafe(params: PublishCafeParams): Promise<{ url: string }> {
-  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], faq = "", imgCount = 0, showWindow = false, onShot, onLog = console.log } = params;
+  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], faq = "", imgCount = 0, imgPrompts = [], flowSlots = [], showWindow = false, onShot, onLog = console.log } = params;
   // 최종 본문 조립: 인사말 → 본문 → 링크 → (이미지 N장 삽입) → FAQ(질문형식). 지금은 텍스트 기준 로그만.
   const linkText = links.length ? "\n\n" + links.map(l => `▶ ${l.name}: ${l.url}`).join("\n") : "";
   const content = [greeting, body, linkText, faq].filter(s => s && s.trim()).join("\n\n");
+
+  // ── 🌈 플로우 이미지 생성 (발행 흐름 안에서) ──
+  //    연결된 플로우 계정 slot을 순서대로 시도 → 크레딧 소진(FLOW_NO_CREDIT)이면 다음 계정 → 다 쓰면 이미지 없이 진행.
+  let flowImages: { src: string; alt: string }[] = [];
+  if (imgCount > 0 && imgPrompts.length > 0) {
+    onLog(`[cafe] 🌈 이미지 ${imgCount}장 생성 시작 (플로우 계정 ${flowSlots.length}개 순차)`);
+    const slots = flowSlots.length ? flowSlots : [0];
+    for (const slot of slots) {
+      const port = 9222 + slot;
+      onLog(`[cafe] [slot ${slot}] 이미지 생성 시도 (포트 ${port})…`);
+      try {
+        const imgs = await generateFlowImagesCDP({ prompts: imgPrompts, captions: [], cdpPort: port, onLog });
+        if (imgs.length > 0) {
+          flowImages = imgs.map((im: any) => ({ src: im.src, alt: im.alt || "" }));
+          onLog(`[cafe] [slot ${slot}] ✅ 이미지 ${imgs.length}장 생성 성공`);
+          if (onShot && flowImages[0]?.src?.startsWith("data:")) onShot("생성된 이미지 1", flowImages[0].src);
+          break;
+        }
+        onLog(`[cafe] [slot ${slot}] 이미지 0장 → 다음 계정`);
+      } catch (e: any) {
+        const msg = String(e?.message || e);
+        if (/FLOW_NO_CREDIT|FLOW_POLICY_STUCK/.test(msg)) { onLog(`[cafe] [slot ${slot}] ⚠️ 토큰 소진 → 다음 계정`); continue; }
+        onLog(`[cafe] [slot ${slot}] 생성 실패: ${msg.slice(0, 80)} → 다음 계정`);
+      }
+    }
+    if (!flowImages.length) onLog(`[cafe] 🛑 모든 플로우 계정 토큰 소진 — 이미지 없이 글만 발행`);
+  }
   if (!naverSessionExists(userId)) throw new Error("네이버 세션 없음(먼저 계정 로그인)");
   const session = readSession<any>(naverSessionName(userId), LEGACY_SESSION_DIRS);
   const cookies = await ensureLiveSessionNaver(userId, onLog, session);
@@ -728,7 +757,9 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
 
     // ⚠️ 여기까지가 1차(구조 파악). 실제 입력/발행은 위 진단 로그로 셀렉터 확정 후 다음 버전에서 연결.
     // 지금은 안전하게 "발행 직전"까지만 가고 실제 등록은 하지 않는다(오발행 방지).
-    onLog(`[cafe] ⚠️ 발행 직전까지 도달(진단 모드). 제목="${title}" / ${greeting ? "인사말+" : ""}본문 ${body.length}자 / 링크 ${links.length}개 / 이미지 ${imgCount}장(본문 끝) / FAQ ${faq ? "있음(맨 아래)" : "없음"} / 총 ${content.length}자. 실제 등록은 셀렉터 확정 후 연결.`);
+    // 배치 순서(테리 확정): 제목 → 썸네일(첫 이미지) → 인사말 → 본문 글/이미지 번갈아 → (본문 끝) → 바로 FAQ(질문, 이미지 없음)
+    onLog(`[cafe] 📐 배치: 제목 → 썸네일(이미지1) → ${greeting ? "인사말 → " : ""}본문(글·이미지 번갈아, 이미지 ${flowImages.length || imgCount}장) → 본문 끝나면 바로 ❓FAQ${faq ? "" : "(없음)"}`);
+    onLog(`[cafe] ⚠️ 발행 직전까지 도달(진단 모드). 제목="${title}" / 본문 ${body.length}자 / 생성이미지 ${flowImages.length}장 / 링크 ${links.length}개 / FAQ ${faq ? "있음" : "없음"} / 총 ${content.length}자. 실제 등록은 에디터 셀렉터 확정 후 연결.`);
     await shot("발행 직전(진단 모드)");
 
     await browser.close();
