@@ -648,10 +648,11 @@ export interface PublishCafeParams {
   onShot?: (caption: string, dataUrl: string) => void;
   onLog?: (msg: string) => void;
   onBrowser?: (b: import("playwright").Browser) => void; // 서버가 browser를 잡아 취소 시 즉시 죽이게
+  isCancelled?: () => boolean; // 취소됐는지 확인(이미지 생성 후 발행 전 체크 → 취소 시 발행 안 함)
 }
 
 export async function publishCafe(params: PublishCafeParams): Promise<{ url: string }> {
-  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], faq = "", hashtags = "", imgCount = 0, imgPrompts = [], flowSlots = [], draftOnly = false, showWindow = false, onShot, onLog = console.log, onBrowser } = params;
+  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], faq = "", hashtags = "", imgCount = 0, imgPrompts = [], flowSlots = [], draftOnly = false, showWindow = false, onShot, onLog = console.log, onBrowser, isCancelled } = params;
   // 최종 본문 조립: 인사말 → 본문 → 링크 → (이미지 N장 삽입) → FAQ(질문형식) → 해시태그(맨끝).
   const linkText = links.length ? "\n\n" + links.map(l => `▶ ${l.name}: ${l.url}`).join("\n") : "";
   const content = [greeting, body, linkText, faq, hashtags].filter(s => s && s.trim()).join("\n\n");
@@ -689,6 +690,8 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     else if (flowImages.length < imgCount) onLog(`[cafe] ⚠️ 목표 ${imgCount}장 중 ${flowImages.length}장만 확보(계정 부족) — 있는 만큼 발행`);
     else onLog(`[cafe] ✅ 이미지 ${flowImages.length}장 전부 확보`);
   }
+  // ★취소 체크: 이미지 생성 중 취소됐으면 발행 안 함(글이 카페에 올라가는 것 방지)
+  if (isCancelled?.()) { onLog("[cafe] 🛑 취소됨 — 발행하지 않고 중단"); return { url: "취소됨(발행 안 함)" }; }
   if (!naverSessionExists(userId)) throw new Error("네이버 세션 없음(먼저 계정 로그인)");
   const session = readSession<any>(naverSessionName(userId), LEGACY_SESSION_DIRS);
   const cookies = await ensureLiveSessionNaver(userId, onLog, session);

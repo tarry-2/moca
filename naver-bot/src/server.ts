@@ -173,11 +173,13 @@ app.post("/api/cafe/boards", async (req, res) => {
 });
 
 
-/* ── ☕ 카페: 발행 취소(진행 중 browser 즉시 종료 → 좀비 방지) ── */
+/* ── ☕ 카페: 발행 취소(진행 중 browser 즉시 종료 + 취소 플래그 → 발행 진행 막음) ── */
 let activeCafeBrowsers: import("playwright").Browser[] = [];
+let cafeCancelled = false; // 취소 신호(이미지 생성 중 취소 시 발행 단계로 안 넘어가게)
 app.post("/api/cafe/cancel", async (_req, res) => {
+  cafeCancelled = true;
   const n = activeCafeBrowsers.length;
-  console.log(`[cafe] 🛑 취소 요청 — 진행 중 브라우저 ${n}개 종료`);
+  console.log(`[cafe] 🛑 취소 요청 — 진행 중 브라우저 ${n}개 종료 + 발행 중단 플래그`);
   for (const b of activeCafeBrowsers) { try { await b.close(); } catch {} }
   activeCafeBrowsers = [];
   res.json({ ok: true, closed: n });
@@ -193,6 +195,7 @@ app.post("/api/cafe/publish", async (req, res) => {
     }
     const logs: string[] = [];
     const shots: { caption: string; dataUrl: string }[] = [];
+    cafeCancelled = false; // 새 발행 시작 → 취소 플래그 리셋
     try {
       const r = await publishCafe({
         userId, cafeId, cafeUrl, menuId, title, greeting, body, links, faq, hashtags,
@@ -204,6 +207,7 @@ app.post("/api/cafe/publish", async (req, res) => {
         onLog: (m) => { logs.push(m); console.log(m); },
         onShot: (caption, dataUrl) => { shots.push({ caption, dataUrl }); },
         onBrowser: (b) => { activeCafeBrowsers.push(b); b.on("disconnected", () => { activeCafeBrowsers = activeCafeBrowsers.filter(x => x !== b); }); },
+        isCancelled: () => cafeCancelled, // 취소됐는지 봇이 확인(이미지 생성 후 발행 전 체크)
       });
       res.json({ success: true, url: r.url, logs, shots });
     } catch (e: any) {

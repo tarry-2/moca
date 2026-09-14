@@ -277,8 +277,13 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
         log.push(`[${i + 1}/${kws.length}] 제목: ${post.title}`, "info", cafeName);
         const success = await sendOnePublish(kws[i], post);
         if (stopRef.current) { log.push(`🛑 취소됨 (완료 ${ok}·실패 ${fail})`, "warn", cafeName); setRunState("idle"); setWaitInfo(""); return; }
+        // 정지로 이 글이 중단된 경우 → 실패로 안 세고, 이 글(i)부터 이어가게
+        if (pauseRef.current) { resumeIdxRef.current = i; log.push(`⏸ 정지됨 — ${i + 1}번째 글 중단(이어가기로 이 글부터 다시)`, "warn", cafeName); setRunState("paused"); setWaitInfo(""); return; }
         if (success) ok++; else fail++;
-      } catch (e: any) { fail++; log.push(`[${i + 1}] 생성 실패: ${e?.message || e}`, "error", cafeName); }
+      } catch (e: any) {
+        if (pauseRef.current) { resumeIdxRef.current = i; log.push(`⏸ 정지됨 — ${i + 1}번째에서 멈춤`, "warn", cafeName); setRunState("paused"); setWaitInfo(""); return; }
+        fail++; log.push(`[${i + 1}] 생성 실패: ${e?.message || e}`, "error", cafeName);
+      }
       setSeqProg({ idx: i + 1, total: kws.length, ok, fail });
 
       // 글 사이 텀(마지막 글 뒤엔 안 기다림) — 밴 방지
@@ -514,7 +519,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
             style={{ gridColumn: "1/3", background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 9, padding: "13px", fontSize: 15, fontWeight: 800, cursor: runState !== "idle" ? "default" : "pointer", opacity: runState !== "idle" ? 0.5 : 1 }}>
             ▶ 발행 시작
           </button>
-          <button className="moca-w-btn" disabled={runState !== "running"} onClick={() => { pauseRef.current = true; log.push("⏸ 정지 요청 — 현재 글 끝나면 멈춰요", "warn"); }}
+          <button className="moca-w-btn" disabled={runState !== "running"} onClick={() => { pauseRef.current = true; abortRef.current?.abort(); botFetch(`${BOT_BASE}/api/cafe/cancel`, { method: "POST" }).catch(() => {}); log.push("⏸ 정지 — 진행 중 글 중단(이어가기로 이 글부터 다시)", "warn"); }}
             style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 9, padding: "11px", fontSize: 14, fontWeight: 700, cursor: runState !== "running" ? "default" : "pointer", opacity: runState !== "running" ? 0.5 : 1 }}>
             ⏸ 정지
           </button>
