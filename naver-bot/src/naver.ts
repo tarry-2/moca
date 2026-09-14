@@ -3051,10 +3051,14 @@ export async function generateFlowImagesCDP(params: {
           return chip ? (chip.textContent || "").includes("이미지") : false;
         }).catch(() => false);
         if (already) { log("[Flow] 🖼️ 이미 이미지 모드"); return true; }
-        // 1) 설정 팝업 열기(요약 칩 클릭)
-        for (const sel of ["button:has-text('360p')", "button:has-text('720p')", "button:has-text('8초')", "button:has-text('동영상')"]) {
-          try { const el = page.locator(sel).first(); if (await el.count() > 0 && await el.isVisible().catch(() => false)) { await el.click({ timeout: 3000 }); await page.waitForTimeout(700); break; } } catch {}
-        }
+        // 1) 설정 팝업 열기 — 최신 Flow(2026-09)는 요약칩 대신 tune(설정) 버튼. 둘 다 시도.
+        const openSettings = async () => {
+          for (const sel of ["button[aria-label='설정']", "button:has-text('tune')", "button:has-text('360p')", "button:has-text('720p')", "button:has-text('8초')", "button:has-text('동영상')"]) {
+            try { const el = page.locator(sel).first(); if (await el.count() > 0 && await el.isVisible().catch(() => false)) { await el.click({ timeout: 3000 }); await page.waitForTimeout(800); return true; } } catch {}
+          }
+          return false;
+        };
+        await openSettings();
         // 2) [이미지] 토글 클릭 — 페이지 안에서 '정확히 이미지' 토글을 찾아 클릭하고, 클릭 후 실제로 이미지 모드가 됐는지 검증.
         //   ★테리 실측(2026-09): 클릭이 안 먹어 '동영상'인 채로 생성돼 6크레딧·high-demand 경고·느림. → 최대 3회 재시도+검증.
         const isImageNow = async (): Promise<boolean> => page.evaluate(() => {
@@ -3075,11 +3079,9 @@ export async function generateFlowImagesCDP(params: {
           }).catch(() => false);
           await page.waitForTimeout(600);
           if (await isImageNow()) { log("[Flow] 🖼️ 출력 모드를 '이미지'로 설정(영상 방지·크레딧 절약)"); return true; }
-          if (!clicked && attempt === 0) {
-            // 팝업이 아직 안 열렸을 수 있으니 요약 칩 다시 클릭해 연다
-            for (const sel of ["button:has-text('360p')", "button:has-text('720p')", "button:has-text('동영상')"]) {
-              try { const el = page.locator(sel).first(); if (await el.count() > 0 && await el.isVisible().catch(() => false)) { await el.click({ timeout: 2000 }); await page.waitForTimeout(500); break; } } catch {}
-            }
+          if (!clicked) {
+            // 팝업이 아직 안 열렸을 수 있으니 설정(tune)/요약칩 다시 클릭해 연다
+            await openSettings();
           }
         }
         log("[Flow] ⚠️ '이미지' 토글 클릭이 반영 안 됨 — DOM 진단 남김(동영상으로 생성될 수 있음)");
