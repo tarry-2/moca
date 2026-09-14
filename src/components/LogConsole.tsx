@@ -3,17 +3,9 @@
 //  - text 로그(색상·시간·[태그]) + shot(단계별 스크린샷 캡처) 혼합
 //  - 🪟 창보기 토글(ON=실제 크롬 창 관찰 / OFF=백그라운드+캡처 로그)
 //  - 📄 복사 · 🔍 크게보기 모달 · 개별 캡처 확대 · 자동 하단 스크롤
+//  - 색상은 CSS 변수(var(--m-*))로 → 다크/라이트 테마 자동 반영
 import { useEffect, useRef, useState } from "react";
-import type { UseLog, LogColor, LogEntry } from "../lib/useLog";
-
-const COLORS: Record<LogColor, string> = {
-  sys: "#c8a27a",
-  info: "#e8dccb",
-  progress: "#ffcf6b",
-  success: "#7dd88f",
-  warn: "#ffb84d",
-  error: "#ff7a7a",
-};
+import type { UseLog, LogEntry } from "../lib/useLog";
 
 function ts(t: number) {
   return new Date(t).toLocaleTimeString("ko-KR", { hour12: false });
@@ -50,16 +42,13 @@ export default function LogConsole({ log, title = "실시간 로그", showWindow
 
   function onScroll(e: React.UIEvent<HTMLDivElement>) {
     const el = e.currentTarget;
-    // 바닥 근처면 자동스크롤 유지, 위로 올려 읽으면 멈춤
     setAutoScroll(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
   }
 
   const renderEntry = (e: LogEntry) => {
-    const time = <span style={{ color: "#6f5b45", marginRight: 8, flexShrink: 0 }}>{ts(e.t)}</span>;
+    const time = <span style={{ color: "var(--m-dim)", marginRight: 8, flexShrink: 0 }}>{ts(e.t)}</span>;
     const tag = e.tag ? (
-      <span style={{ color: "#c8a27a", background: "#3a2a1a", borderRadius: 5, padding: "0 6px", marginRight: 6, fontSize: 11, flexShrink: 0 }}>
-        {e.tag}
-      </span>
+      <span style={{ color: "var(--m-gold)", background: "var(--m-tagbg)", borderRadius: 5, padding: "0 6px", marginRight: 6, fontSize: 11, flexShrink: 0 }}>{e.tag}</span>
     ) : null;
     if (e.type === "shot") {
       return (
@@ -67,14 +56,9 @@ export default function LogConsole({ log, title = "실시간 로그", showWindow
           {time}
           {tag}
           <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-            <span style={{ color: "#c8a27a" }}>📸 {e.caption ?? "화면 캡처"}</span>
+            <span style={{ color: "var(--m-log-sys)" }}>📸 {e.caption ?? "화면 캡처"}</span>
             {e.dataUrl && (
-              <img
-                src={e.dataUrl}
-                alt={e.caption ?? "캡처"}
-                onClick={() => setZoom(e.dataUrl!)}
-                style={{ maxWidth: 260, width: "100%", borderRadius: 8, border: "1px solid #3a2a1a", cursor: "zoom-in" }}
-              />
+              <img src={e.dataUrl} alt={e.caption ?? "캡처"} onClick={() => setZoom(e.dataUrl!)} style={{ maxWidth: 260, width: "100%", borderRadius: 8, border: "1px solid var(--m-line)", cursor: "zoom-in" }} />
             )}
           </div>
         </div>
@@ -84,7 +68,7 @@ export default function LogConsole({ log, title = "실시간 로그", showWindow
       <div key={e.id} style={{ display: "flex", alignItems: "flex-start", padding: "2px 0" }}>
         {time}
         {tag}
-        <span style={{ color: COLORS[e.color], whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{e.msg}</span>
+        <span style={{ color: `var(--m-log-${e.color})`, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{e.msg}</span>
       </div>
     );
   };
@@ -95,9 +79,9 @@ export default function LogConsole({ log, title = "실시간 로그", showWindow
       onClick={onClick}
       title={t}
       style={{
-        background: active ? "#c8a27a" : "#2a1d12",
-        color: active ? "#16110d" : "#e8dccb",
-        border: "1px solid #4a3524",
+        background: active ? "var(--m-gold)" : "var(--m-tabhover)",
+        color: active ? "var(--m-goldink)" : "var(--m-text)",
+        border: "1px solid var(--m-line2)",
         borderRadius: 8,
         padding: "7px 11px",
         fontSize: 12,
@@ -111,9 +95,9 @@ export default function LogConsole({ log, title = "실시간 로그", showWindow
   );
 
   const header = (inModal: boolean) => (
-    <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", padding: "10px 12px", borderBottom: "1px solid #3a2a1a" }}>
-      <b style={{ color: "#f4efe4", fontSize: 14, marginRight: "auto" }}>
-        📜 {title} <span style={{ color: "#6f5b45", fontWeight: 600, fontSize: 12 }}>· {entries.length}줄</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", padding: "10px 12px", borderBottom: "1px solid var(--m-line)" }}>
+      <b style={{ color: "var(--m-text)", fontSize: 14, marginRight: "auto" }}>
+        📜 {title} <span style={{ color: "var(--m-dim)", fontWeight: 600, fontSize: 12 }}>· {entries.length}줄</span>
       </b>
       {onToggleWindow !== undefined && (
         <Btn onClick={() => onToggleWindow(!showWindow)} active={showWindow} title="ON=실제 크롬 창으로 진행을 직접 봄 / OFF=백그라운드+캡처 로그">
@@ -128,50 +112,36 @@ export default function LogConsole({ log, title = "실시간 로그", showWindow
   );
 
   const emptyState = (
-    <div style={{ color: "#6f5b45", textAlign: "center", padding: 20, fontSize: 13, lineHeight: 1.6 }}>
+    <div style={{ color: "var(--m-dim)", textAlign: "center", padding: 20, fontSize: 13, lineHeight: 1.6 }}>
       계정 선택 → 글 생성 → ▶ 시작하기<br />
-      여기에 진행 로그가 <b style={{ color: "#c8a27a" }}>실시간·세세히</b> 떠요 (단계·계정·카페·캡처).
+      여기에 진행 로그가 <b style={{ color: "var(--m-gold)" }}>실시간·세세히</b> 떠요 (단계·계정·카페·캡처).
     </div>
   );
 
+  const bodyStyle: React.CSSProperties = { flex: 1, overflowY: "auto", padding: "8px 12px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12.5, lineHeight: 1.55 };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "#1b130d", border: "1px solid #3a2a1a", borderRadius: 12, overflow: "hidden" }}>
-      <style>{`.moca-logbtn:hover{filter:brightness(1.25)} .moca-logbtn:active{transform:scale(.94)}`}</style>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--m-console)", border: "1px solid var(--m-line)", borderRadius: 12, overflow: "hidden" }}>
+      <style>{`.moca-logbtn:hover{filter:brightness(1.12)} .moca-logbtn:active{transform:scale(.94)}`}</style>
       {header(false)}
-      <div
-        ref={bodyRef}
-        onScroll={onScroll}
-        style={{ flex: 1, overflowY: "auto", padding: "8px 12px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12.5, lineHeight: 1.55 }}
-      >
+      <div ref={bodyRef} onScroll={onScroll} style={bodyStyle}>
         {entries.length === 0 ? emptyState : entries.map(renderEntry)}
       </div>
 
-      {/* 🔍 크게보기 모달 */}
       {big && (
-        <div
-          onClick={() => setBig(false)}
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 1000, display: "flex", padding: "3vh 3vw" }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{ margin: "auto", width: "100%", maxWidth: 900, height: "94vh", display: "flex", flexDirection: "column", background: "#1b130d", border: "1px solid #4a3524", borderRadius: 14, overflow: "hidden" }}
-          >
+        <div onClick={() => setBig(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 1000, display: "flex", padding: "3vh 3vw" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ margin: "auto", width: "100%", maxWidth: 900, height: "94vh", display: "flex", flexDirection: "column", background: "var(--m-console)", border: "1px solid var(--m-line2)", borderRadius: 14, overflow: "hidden" }}>
             {header(true)}
-            <div
-              ref={bigRef}
-              onScroll={onScroll}
-              style={{ flex: 1, overflowY: "auto", padding: "10px 16px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 13.5, lineHeight: 1.6 }}
-            >
+            <div ref={bigRef} onScroll={onScroll} style={{ ...bodyStyle, fontSize: 13.5, lineHeight: 1.6, padding: "10px 16px" }}>
               {entries.length === 0 ? emptyState : entries.map(renderEntry)}
             </div>
           </div>
         </div>
       )}
 
-      {/* 개별 캡처 확대 */}
       {zoom && (
-        <div onClick={() => setZoom(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.9)", zIndex: 1100, display: "flex", padding: "4vh 4vw", cursor: "zoom-out" }}>
-          <img src={zoom} alt="캡처 확대" style={{ margin: "auto", maxWidth: "100%", maxHeight: "92vh", borderRadius: 10, border: "1px solid #4a3524" }} />
+        <div onClick={() => setZoom(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 1100, display: "flex", padding: "4vh 4vw", cursor: "zoom-out" }}>
+          <img src={zoom} alt="캡처 확대" style={{ margin: "auto", maxWidth: "100%", maxHeight: "92vh", borderRadius: 10, border: "1px solid var(--m-line2)" }} />
         </div>
       )}
     </div>
