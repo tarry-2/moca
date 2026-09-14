@@ -3045,8 +3045,44 @@ export async function generateFlowImagesCDP(params: {
 
     // 4-b) ★출력 모드를 '이미지'로 강제(영상 방지·토큰 절약) — Flow는 원래 Veo 영상 툴이라 기본이 동영상.
     //   세션당 1회만 설정하면 됨. Flow UI가 자주 바뀌므로 여러 후보 시도 + 실패 시 DOM 진단 로그.
+    // 4-a) ★에이전트 설정 자동화(2026-09 Flow UI): "생성 전 확인 → 안 함" + "이미지 기본값 x1" 저장.
+    //   이걸 해두면 크레딧 확인 팝업이 안 뜨고 봇이 이미지 토글과 씨름할 필요가 없다(원터치와 동일 상태를 봇이 자동 세팅).
+    //   세션당 1회면 계정에 저장돼 계속 유지.
+    const setAgentAutoConfig = async (): Promise<void> => {
+      try {
+        // 설정(tune/에이전트 설정) 패널 열기
+        let opened = false;
+        for (const sel of ["button[aria-label='설정']", "button[aria-label='에이전트 요청 사항']", "button:has-text('tune')"]) {
+          try { const el = page.locator(sel).first(); if (await el.count() > 0 && await el.isVisible().catch(() => false)) { await el.click({ timeout: 3000 }); await page.waitForTimeout(900); opened = true; break; } } catch {}
+        }
+        if (!opened) return;
+        // 패널 안에서 '안 함'(생성 전 확인) 선택 + 'x1'(이미지 기본값) 선택 → '저장'
+        const done = await page.evaluate(() => {
+          const vis = (el: Element) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+          const clickByText = (re: RegExp) => {
+            const el = [...document.querySelectorAll("button,[role=radio],[role=button],label,div,span")].find(e => vis(e) && re.test((e.textContent || "").trim()));
+            if (el) { (el as HTMLElement).click(); return true; }
+            return false;
+          };
+          const noConfirm = clickByText(/^안\s*함$/);       // 생성 전 확인 → 안 함
+          const x1 = clickByText(/^x1$/i);                   // 이미지 기본값 → x1(1장)
+          return { noConfirm, x1 };
+        }).catch(() => ({ noConfirm: false, x1: false }));
+        await page.waitForTimeout(400);
+        // 저장 버튼
+        const saved = await page.evaluate(() => {
+          const el = [...document.querySelectorAll("button")].find(b => /^저장$/.test((b.textContent || "").trim()));
+          if (el) { (el as HTMLElement).click(); return true; }
+          return false;
+        }).catch(() => false);
+        log(`[Flow] ⚙️ 에이전트 설정 자동화: 확인안함=${done.noConfirm} x1=${done.x1} 저장=${saved}`);
+        await page.waitForTimeout(800);
+      } catch (e) { log(`[Flow] 에이전트 설정 자동화 스킵: ${String((e as any)?.message || e).split("\n")[0]}`); }
+    };
+
     const setImageMode = async (): Promise<boolean> => {
       // 실제 Flow UI(테리 스크린샷): 요약 칩('동영상·360p·8초')→설정 팝업→맨 위 [이미지][동영상] 토글. '이미지' 클릭.
+      await setAgentAutoConfig(); // ★먼저 에이전트 설정(확인 안 함+x1) 자동 저장
       try {
         // 이미 이미지 모드면 스킵
         const already = await page.evaluate(() => {
