@@ -71,6 +71,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   }
 
   async function loadCafes() {
+    if (busy) return;
     if (!accId) { log.push("먼저 '카페 계정' 탭에서 계정을 선택하세요", "warn"); return; }
     setBusy("cafes");
     log.push("내 카페 목록 불러오는 중… (봇)", "progress");
@@ -85,6 +86,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   }
 
   async function loadBoards() {
+    if (busy) return;
     if (!accId || !cafeId) { log.push("계정과 카페를 먼저 선택하세요", "warn"); return; }
     setBusy("boards");
     log.push(`게시판 목록 불러오는 중… (${cafeName})`, "progress");
@@ -102,6 +104,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   }
 
   async function genAI() {
+    if (busy) return; // 중복 클릭 방지
     if (!keyword.trim()) { log.push("키워드를 입력하세요", "warn"); return; }
     setBusy("ai");
     log.push(`━━ AI 글 생성: "${keyword}" ━━`, "sys");
@@ -118,6 +121,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   }
 
   async function publish() {
+    if (busy) return;
     if (!accId || !cafeId || !menuId || !title.trim() || !body.trim()) {
       log.push("계정·카페·게시판·제목·본문을 모두 채워주세요", "warn");
       return;
