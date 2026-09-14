@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession } from "./naver";
+import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards } from "./naver";
 import { saveTistorySession, publishTistory, tistorySessionExists, deleteTistorySession } from "./tistory";
 import { fetchPendingJobs, updateJob, claimPendingJob, finishQueuedHistory, useQuota, refundQuota, checkPublishEntitlement, incrementDailyPublish } from "./supabase";
 import { acquireAccountLock } from "./account-lock";
@@ -140,6 +140,34 @@ app.get("/api/naver/categories/:userId", async (req, res) => {
       res.json({ categories });
     } catch (e: any) {
       res.status(500).json({ error: e.message, categories: [] });
+    }
+  } finally { finishWork(); }
+});
+
+/* ── ☕ 카페: 내 카페 목록 ── */
+app.get("/api/cafe/my/:userId", async (req, res) => {
+  const finishWork = beginWork();
+  try {
+    try {
+      const cafes = await getMyCafes(req.params.userId);
+      res.json({ cafes });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message, cafes: [] });
+    }
+  } finally { finishWork(); }
+});
+
+/* ── ☕ 카페: 게시판(카테고리) 목록 ── */
+app.post("/api/cafe/boards", async (req, res) => {
+  const finishWork = beginWork();
+  try {
+    const { userId, cafeId } = req.body || {};
+    if (!userId || !cafeId) return res.status(400).json({ error: "userId, cafeId 필요", boards: [] });
+    try {
+      const boards = await getCafeBoards(userId, cafeId);
+      res.json({ boards });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message, boards: [] });
     }
   } finally { finishWork(); }
 });

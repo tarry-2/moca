@@ -457,6 +457,115 @@ export async function getNaverCategories(
   }
 }
 
+/* ═══════════════ ☕ 카페 (MOCA) ═══════════════
+   세션 로드 패턴은 getNaverCategories와 동일(readSession→launch→addCookies→goto).
+   ⚠️ 네이버 카페 API 응답 구조는 실계정 검증 때 아래 진단로그(raw 원문)를 보고 교정한다. */
+
+export interface MyCafe { cafeId: string; name: string; url: string; }
+export interface CafeBoard { menuId: string; name: string; type: string; }
+
+async function openCafeContext(userId: string) {
+  if (!naverSessionExists(userId)) throw new Error("네이버 세션 없음(먼저 계정 로그인)");
+  const session = readSession<any>(naverSessionName(userId), LEGACY_SESSION_DIRS);
+  const cookies = await ensureLiveSessionNaver(userId, console.log, session);
+  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const context = await browser.newContext({ userAgent: UA, viewport: { width: 1280, height: 800 }, locale: "ko-KR", timezoneId: "Asia/Seoul" });
+  await applyAntiDetection(context);
+  await context.addCookies(cookies);
+  const page = await context.newPage();
+  return { browser, page };
+}
+
+// ☕ 내가 가입/개설한 카페 목록
+export async function getMyCafes(userId: string): Promise<MyCafe[]> {
+  const { browser, page } = await openCafeContext(userId);
+  try {
+    console.log("[cafe] 내 카페 목록 조회 시작");
+    await page.goto("https://section.cafe.naver.com/", { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(1500);
+    const result: any = await page.evaluate(async () => {
+      const tries = [
+        "https://apis.naver.com/cafe-web/cafe-mobile/CafeMemberJoinedListV1?perPage=100",
+        "https://apis.naver.com/cafe-web/cafe2/CafeMemberJoinedList?perPage=100",
+      ];
+      for (const url of tries) {
+        try {
+          const r = await fetch(url, { headers: { Accept: "application/json" }, credentials: "include" });
+          if (!r.ok) continue;
+          const j = await r.json();
+          return { url, raw: JSON.stringify(j).slice(0, 800), json: j };
+        } catch (e) { /* 다음 후보 */ }
+      }
+      return { error: "가입 카페 API 후보 전부 실패" };
+    });
+    console.log("[cafe] 내 카페 API 응답:", result?.url || result?.error, "|", result?.raw || "");
+    let list: MyCafe[] = [];
+    const j = result?.json;
+    const arr = j?.message?.result?.cafeList || j?.message?.result?.list || j?.result?.cafeList || [];
+    if (Array.isArray(arr)) {
+      list = arr
+        .map((c: any) => ({
+          cafeId: String(c.cafeId ?? c.clubid ?? c.clubId ?? ""),
+          name: String(c.cafeName ?? c.clubname ?? c.name ?? ""),
+          url: String(c.cafeUrl ?? c.cluburl ?? c.url ?? ""),
+        }))
+        .filter((c: MyCafe) => c.cafeId && c.name);
+    }
+    console.log(`[cafe] 파싱된 카페 ${list.length}개`);
+    await browser.close();
+    return list;
+  } catch (e) {
+    await browser.close().catch(() => {});
+    console.error("[cafe] 내 카페 조회 실패:", e);
+    throw e;
+  }
+}
+
+// ☕ 특정 카페의 게시판(메뉴/카테고리) 목록
+export async function getCafeBoards(userId: string, cafeId: string): Promise<CafeBoard[]> {
+  const { browser, page } = await openCafeContext(userId);
+  try {
+    console.log(`[cafe] 게시판 목록 조회 cafeId=${cafeId}`);
+    await page.goto("https://cafe.naver.com/", { waitUntil: "domcontentloaded", timeout: 30000 });
+    const result: any = await page.evaluate(async (cid) => {
+      const tries = [
+        `https://apis.naver.com/cafe-web/cafe2/SideMenuList?cafeId=${cid}`,
+        `https://apis.naver.com/cafe-web/cafe2/SideMenuList.json?cafeId=${cid}`,
+      ];
+      for (const url of tries) {
+        try {
+          const r = await fetch(url, { headers: { Accept: "application/json" }, credentials: "include" });
+          if (!r.ok) continue;
+          const j = await r.json();
+          return { url, raw: JSON.stringify(j).slice(0, 800), json: j };
+        } catch (e) { /* 다음 후보 */ }
+      }
+      return { error: "SideMenuList 후보 전부 실패" };
+    }, cafeId);
+    console.log("[cafe] 게시판 API 응답:", result?.url || result?.error, "|", result?.raw || "");
+    let boards: CafeBoard[] = [];
+    const j = result?.json;
+    const menus = j?.message?.result?.menus || j?.result?.menus || j?.menus || [];
+    if (Array.isArray(menus)) {
+      boards = menus
+        .map((m: any) => ({
+          menuId: String(m.menuId ?? m.menuid ?? ""),
+          name: String(m.menuName ?? m.menuname ?? m.name ?? ""),
+          type: String(m.menuType ?? m.boardType ?? ""),
+        }))
+        // 링크(L)·구분선(C/S) 등 글쓰기 불가 메뉴는 제외(추정 → 실측 교정)
+        .filter((b: CafeBoard) => b.menuId && b.name && b.type !== "L" && b.type !== "C" && b.type !== "S");
+    }
+    console.log(`[cafe] 파싱된 게시판 ${boards.length}개`);
+    await browser.close();
+    return boards;
+  } catch (e) {
+    await browser.close().catch(() => {});
+    console.error("[cafe] 게시판 조회 실패:", e);
+    throw e;
+  }
+}
+
 /* ── 마커 및 영문 섞임 텍스트 정리 ── */
 export function cleanContent(text: string): string {
   return text
