@@ -48,7 +48,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [linkUrl, setLinkUrl] = useState(() => localStorage.getItem("moca_link_url") || "");
   const [useGreeting, setUseGreeting] = useState(true);
   const [useLink, setUseLink] = useState(true);
-  const [draftOnly, setDraftOnly] = useState(true); // 처음엔 안전하게 임시등록 기본 ON
+  const [draftOnly, setDraftOnly] = useState(false); // 기본 = 실제 발행(등록). 체크하면 임시등록(테스트)
   const ONPARTNER = { name: "온파트너", url: "https://partner.yuanfnb.com" };
 
   // ── 🔁 순차 발행(여러 키워드 자동) + 제어 4개(발행시작/정지/이어가기/취소) ──
