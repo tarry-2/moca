@@ -470,7 +470,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
             <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: "var(--m-sub)", cursor: "pointer" }}>
               <input type="checkbox" checked={termRand} onChange={(e) => setTermRand(e.target.checked)} style={{ width: "auto" }} disabled={runState !== "idle"} /> ±랜덤(사람처럼)
             </label>
-            <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--m-log-warn)" }}>⚠️ 카페는 연속 도배=밴, 간격 권장</span>
+            <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--m-log-success)" }}>💡 간격을 둘수록 안전해요(권장 30분+)</span>
           </div>
         </div>
 

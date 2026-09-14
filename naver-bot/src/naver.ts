@@ -770,32 +770,30 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
 
     // 2) 본문 = 인사말 + 본문 + 링크 + FAQ (문단별 입력, 스마트에디터는 fill 안 먹음)
     const bodyText = [greeting, body, linkText.trim(), faq].filter(s => s && s.trim()).join("\n\n");
-    // 본문 영역 후보(진단 기반: 카페는 .se-content/.se-component/contenteditable). 여러 개 시도.
-    const bodySelectors = [
-      ".se-content .se-text-paragraph[contenteditable='true']",
-      ".se-content [contenteditable='true']",
-      ".se-component-content [contenteditable='true']",
-      ".se-component [contenteditable='true']",
-      ".se-main-container [contenteditable='true']:not([data-placeholder*='제목'])",
+    // ★카페 스마트에디터ONE: 본문은 클릭해야 편집영역(contenteditable)이 활성화됨.
+    //   그래서 먼저 .se-content 틀(또는 본문 문단)을 force 클릭 → 커서 들어감 → keyboard.type.
+    const bodyFrameSelectors = [
+      ".se-content .se-text-paragraph",
+      ".se-content .se-module-text",
+      ".se-content",
+      ".se-main-container .se-component",
+      ".se-main-container",
     ];
     let bodyClicked = false;
-    for (const sel of bodySelectors) {
+    for (const sel of bodyFrameSelectors) {
       const el = page.locator(sel).first();
       const n = await el.count().catch(() => 0);
       if (n > 0) {
-        try { await el.click({ timeout: 5000 }); bodyClicked = true; onLog(`[cafe] 본문 영역 클릭: ${sel}`); break; }
-        catch (e) { onLog(`[cafe] 본문 클릭 실패(${sel}) → 다음 후보`); }
+        try { await el.click({ timeout: 5000, force: true }); bodyClicked = true; onLog(`[cafe] 본문 영역 클릭(편집 활성화): ${sel}`); break; }
+        catch { onLog(`[cafe] 본문 클릭 실패(${sel}) → 다음 후보`); }
       }
     }
-    if (!bodyClicked) {
-      // 최후: 제목 아닌 마지막 contenteditable 클릭
-      const all = page.locator("[contenteditable='true']");
-      const cnt = await all.count().catch(() => 0);
-      onLog(`[cafe] 본문 후보 못 찾음 → contenteditable ${cnt}개 중 마지막 클릭 시도`);
-      if (cnt > 0) { try { await all.last().click({ timeout: 5000 }); bodyClicked = true; } catch {} }
-    }
     if (!bodyClicked) throw new Error("본문 입력 영역을 찾지 못했어요(카페 에디터 구조 확인 필요)");
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000); // 편집영역 활성화 대기
+
+    // 활성화 후 contenteditable 확인(디버깅용)
+    const editableCount = await page.locator("[contenteditable='true']").count().catch(() => 0);
+    onLog(`[cafe] 편집영역 활성화 확인: contenteditable ${editableCount}개`);
 
     const lines = bodyText.split("\n");
     for (let i = 0; i < lines.length; i++) {
