@@ -637,7 +637,8 @@ export interface PublishCafeParams {
   title: string;
   greeting?: string;  // 글쓴이 인사말(맨 위)
   body: string;       // 본문(이미지는 이 본문 안에서 끝남)
-  links?: { name: string; url: string }[]; // 온파트너/내 링크(본문에 삽입)
+  links?: { name: string; url: string }[]; // 내 링크(일반 사이트) — 맨 끝에 OG 카드
+  onPartnerProducts?: { name: string; partnerUrl: string; banner?: string }[]; // 온파트너 상품 — 본문 이미지 사이에 상품카드(OG) 분산 삽입 + 상단 제휴문구
   faq?: string;       // 자주 묻는 질문(질문형식) — 이미지 뒤·맨 마지막
   hashtags?: string;  // 해시태그 — 맨 끝(검색 노출)
   imgCount?: number;  // 플로우로 만들 이미지 장수(본문 끝에 삽입)
@@ -652,8 +653,13 @@ export interface PublishCafeParams {
 }
 
 export async function publishCafe(params: PublishCafeParams): Promise<{ url: string }> {
-  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], faq = "", hashtags = "", imgCount = 0, imgPrompts = [], flowSlots = [], draftOnly = false, showWindow = false, onShot, onLog = console.log, onBrowser, isCancelled } = params;
-  // 최종 본문 조립: 인사말 → 본문 → 링크 → (이미지 N장 삽입) → FAQ(질문형식) → 해시태그(맨끝).
+  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], onPartnerProducts = [], faq = "", hashtags = "", imgCount = 0, imgPrompts = [], flowSlots = [], draftOnly = false, showWindow = false, onShot, onLog = console.log, onBrowser, isCancelled } = params;
+  // 온파트너 상품 카드(OG) — 본문 이미지 사이에 분산 삽입 / 상단 제휴 안내 문구
+  const partnerList = (onPartnerProducts || []).filter(p => p && p.partnerUrl && p.name);
+  const ONPARTNER_DISCLOSURE = "※ 이 글에는 제휴 링크가 포함되어 있으며, 구매 시 작성자에게 일정 수수료가 발생할 수 있습니다.";
+  const partnerCardText = (p: { name: string; partnerUrl: string }) => `👇 '${p.name}' 지금 바로 확인하기\n${p.partnerUrl}`;
+  const isPartnerCardPara = (para: string) => /partner\.yuanfnb\.com\/r\//i.test(para);
+  // 최종 본문 조립(검증용): 인사말 → 본문 → 링크 → FAQ → 해시태그.
   const linkText = links.length ? "\n\n" + links.map(l => `▶ ${l.name}: ${l.url}`).join("\n") : "";
   const content = [greeting, body, linkText, faq, hashtags].filter(s => s && s.trim()).join("\n\n");
 
@@ -772,7 +778,7 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     }
 
     // ── ✍️ 실제 입력 (셀렉터 확정: 제목=textarea.textarea_input, 본문=.se-section-text [contenteditable], 등록=a.BaseButton--skinGreen) ──
-    onLog(`[cafe] 📐 배치: 제목 → ${greeting ? "인사말 → " : ""}본문 → ${links.length ? "링크 → " : ""}${faq ? "FAQ" : ""} ${draftOnly ? "(임시등록)" : "(실제 등록)"}`);
+    onLog(`[cafe] 📐 배치: 제목 → 썸네일 → ${partnerList.length ? "제휴안내 → " : ""}${greeting ? "인사말 → " : ""}본문(${partnerList.length ? `온파트너 상품카드 ${partnerList.length}개 분산 + ` : ""}이미지 사이) → ${links.length ? "내 링크 → " : ""}${faq ? "FAQ → " : ""}해시태그 ${draftOnly ? "(임시등록)" : "(실제 등록)"}`);
 
     // 1) 제목
     const titleEl = page.locator("textarea.textarea_input, input[placeholder*='제목'], textarea[placeholder*='제목']").first();
@@ -899,33 +905,57 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     const allParas = mainText.split(/\n\n+/).filter(p => p.trim());
     // 인사말이 있으면 첫 문단(인사말)은 썸네일 바로 아래로 분리
     const greetPara = greeting.trim() ? allParas.shift() : null; // mainText 맨앞=인사말
+    // 🤝 온파트너 상품카드를 본문 문단 사이 비율 위치에 분산 삽입(뒤에서부터 splice → 인덱스 안 밀림)
+    if (partnerList.length && allParas.length) {
+      const ratios = partnerList.length === 1 ? [0.6] : partnerList.length === 2 ? [0.45, 0.78] : [0.35, 0.58, 0.82];
+      const inserts = partnerList.map((p, i) => ({ at: Math.min(allParas.length, Math.max(1, Math.round(allParas.length * (ratios[i] ?? 0.6)))), text: partnerCardText(p) }));
+      inserts.sort((a, b) => b.at - a.at);
+      for (const ins of inserts) allParas.splice(ins.at, 0, ins.text);
+      onLog(`[cafe] 🤝 온파트너 상품카드 ${partnerList.length}개를 본문 사이에 분산 삽입`);
+    }
+    // 문단 타이핑 헬퍼(온파트너 카드면 URL 입력 후 OG 카드 임베드 대기)
+    const typeParaWithCard = async (para: string) => {
+      await typeText(para);
+      if (isPartnerCardPara(para)) { onLog(`[cafe] 🤝 온파트너 상품카드 입력 → OG 카드 임베드 대기…`); await page.waitForTimeout(3500).catch(() => {}); }
+    };
     if (imgFiles.length) {
       // 1) 썸네일(첫 이미지) 맨 위
       await uploadImages([imgFiles[0]]);
       await page.keyboard.press("Enter").catch(() => {});
-      // 2) 인사말
+      // 2) 제휴 안내 문구(온파트너 상품 있을 때, 썸네일 다음·인사말 앞)
+      if (partnerList.length) { await typeText(ONPARTNER_DISCLOSURE); await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); }
+      // 3) 인사말
       if (greetPara) { await typeText(greetPara); await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); }
-      // 3) 인사말 다음엔 '글 먼저' 나오고, 그 뒤부터 [이미지 → 글] 반복.
-      //    앞쪽 문단 몇 개는 이미지 없이 먼저 쓰고(도입부), 그 다음 구간부터 이미지를 문단 앞에 끼운다.
+      // 4) 인사말 다음엔 '글 먼저' 나오고, 그 뒤부터 [이미지 → 글] 반복. 이미지 간격은 '본문 실제 문단'(카드 제외) 기준.
       const rest = imgFiles.slice(1);
-      const lead = Math.min(1, allParas.length); // 도입부: 이미지 없이 먼저 쓸 문단 수(최소 1개)
-      // 이미지를 넣을 시작 문단 인덱스들: lead 이후 구간에 고르게
-      const afterParas = allParas.length - lead;
-      const gap = rest.length ? Math.max(1, Math.floor(afterParas / rest.length)) : allParas.length + 1;
-      let imgIdx = 0;
+      const contentParaCount = allParas.filter(p => !isPartnerCardPara(p)).length;
+      const lead = Math.min(1, contentParaCount); // 도입부: 이미지 없이 먼저 쓸 문단 수(최소 1개)
+      const gap = rest.length ? Math.max(1, Math.floor(Math.max(0, contentParaCount - lead) / rest.length)) : allParas.length + 1;
+      let imgIdx = 0, cIdx = 0; // cIdx = 본문 문단(카드 제외) 진행 카운터
       for (let p = 0; p < allParas.length; p++) {
-        // 도입부(lead) 지난 뒤부터, 구간 시작마다 이미지 먼저(이미지 → 글)
-        if (p >= lead && imgIdx < rest.length && (p - lead) % gap === 0) {
-          await uploadImages([rest[imgIdx++]]);
-          await page.keyboard.press("Enter").catch(() => {});
+        const para = allParas[p];
+        if (!isPartnerCardPara(para)) {
+          // 도입부(lead) 지난 뒤부터, 구간 시작마다 이미지 먼저(이미지 → 글)
+          if (cIdx >= lead && imgIdx < rest.length && (cIdx - lead) % gap === 0) {
+            await uploadImages([rest[imgIdx++]]);
+            await page.keyboard.press("Enter").catch(() => {});
+          }
+          cIdx++;
         }
-        await typeText(allParas[p]);
+        await typeParaWithCard(para);
         await page.keyboard.press("Enter").catch(() => {});
         await page.keyboard.press("Enter").catch(() => {});
       }
       while (imgIdx < rest.length) { await uploadImages([rest[imgIdx++]]); await page.keyboard.press("Enter").catch(() => {}); }
     } else {
-      await typeText(mainText);
+      // 이미지 없음: 제휴문구 → 인사말 → 본문 문단(카드 포함) 순차
+      if (partnerList.length) { await typeText(ONPARTNER_DISCLOSURE); await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); }
+      if (greetPara) { await typeText(greetPara); await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); }
+      for (let p = 0; p < allParas.length; p++) {
+        await typeParaWithCard(allParas[p]);
+        await page.keyboard.press("Enter").catch(() => {});
+        await page.keyboard.press("Enter").catch(() => {});
+      }
     }
     await page.waitForTimeout(400);
     // FAQ+해시태그(맨 아래, 이미지 없음)

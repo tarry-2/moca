@@ -8,6 +8,10 @@ import type { UseLog } from "../lib/useLog";
 
 interface MyCafe { cafeId: string; name: string; url: string; }
 interface CafeBoard { menuId: string; name: string; type: string; }
+// 온파트너 상품(제휴 링크) — partner.yuanfnb.com/api/product-card 응답
+interface OnPartnerProduct { id: string | null; name: string; image: string; price: number | null; available: boolean; partnerUrl: string; shopUrl: string; }
+interface OnPartnerItem { product: OnPartnerProduct; banner: string; }
+const MAX_ONPARTNER = 3;
 
 const inputStyle: React.CSSProperties = {
   width: "100%", padding: "10px 12px", fontSize: 14, borderRadius: 8,
@@ -49,7 +53,12 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [useGreeting, setUseGreeting] = useState(true);
   const [useLink, setUseLink] = useState(true);
   const [draftOnly, setDraftOnly] = useState(false); // 기본 = 실제 발행(등록). 체크하면 임시등록(테스트)
-  const ONPARTNER = { name: "온파트너", url: "https://partner.yuanfnb.com" };
+  // 🤝 온파트너 = "상품 링크"(홈링크 아님). 상품링크 입력→조회(미리보기)→추가(최대 3개). 발행 시 본문 이미지 사이에 상품카드(OG 썸네일) 분산 삽입.
+  const [onPartnerItems, setOnPartnerItems] = useState<OnPartnerItem[]>(() => { try { return JSON.parse(localStorage.getItem("moca_onpartner_items") || "[]"); } catch { return []; } });
+  const [onPartnerLink, setOnPartnerLink] = useState("");       // 입력 중인 상품 링크
+  const [onPartnerPreview, setOnPartnerPreview] = useState<OnPartnerItem | null>(null); // 조회한 상품(아직 추가 전)
+  const [onPartnerLoading, setOnPartnerLoading] = useState(false);
+  const [onPartnerError, setOnPartnerError] = useState("");
 
   // ── 🔁 순차 발행(여러 키워드 자동) + 제어 4개(발행시작/정지/이어가기/취소) ──
   const [seqKeywords, setSeqKeywords] = useState("");
@@ -102,6 +111,52 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     localStorage.setItem("moca_link_name", linkName.trim());
     localStorage.setItem("moca_link_url", linkUrl.trim());
     log.push(linkUrl.trim() ? `내 링크 저장됨: ${linkName.trim() || linkUrl.trim()}` : "내 링크 비움", "success");
+  }
+
+  // 🤝 온파트너 상품 목록 영속(앱 껐다 켜도 유지)
+  function persistOnPartner(items: OnPartnerItem[]) {
+    setOnPartnerItems(items);
+    localStorage.setItem("moca_onpartner_items", JSON.stringify(items));
+  }
+  // ① 조회 — 상품 링크로 정보 불러와 미리보기(onPartnerPreview)만 채운다. 목록엔 아직 안 담김.
+  async function loadOnPartnerProduct() {
+    const link = onPartnerLink.trim();
+    if (!link) { setOnPartnerError("온파트너 상품 링크를 입력해주세요."); return; }
+    if (onPartnerItems.length >= MAX_ONPARTNER) { setOnPartnerError(`상품은 최대 ${MAX_ONPARTNER}개까지 넣을 수 있어요.`); return; }
+    setOnPartnerLoading(true); setOnPartnerError(""); setOnPartnerPreview(null);
+    log.push(`온파트너 상품 조회 중… ${link}`, "progress");
+    try {
+      const response = await fetch(`https://partner.yuanfnb.com/api/product-card?url=${encodeURIComponent(link)}`, { signal: AbortSignal.timeout(10000) });
+      const data = await response.json();
+      if (!data.ok || !data.product) throw new Error(data.error === "invalid_partner_link" ? "온파트너 상품 링크가 아니에요(내 추천 링크를 넣어주세요)." : (data.error || "상품 정보를 불러오지 못했어요."));
+      const prod = data.product as OnPartnerProduct;
+      if (onPartnerItems.some((it) => it.product.partnerUrl === prod.partnerUrl)) { setOnPartnerError("이미 추가된 상품이에요."); return; }
+      // 서버가 만든 가로 배너(온파트너 /api/banner) — 미리보기·향후 배너 삽입용
+      const codeM = prod.partnerUrl.match(/\/r\/([a-z0-9-]+)/i);
+      const banner = codeM ? `https://partner.yuanfnb.com/api/banner?code=${codeM[1]}` : "";
+      setOnPartnerPreview({ product: prod, banner });
+      log.push(`상품 조회 성공: ${prod.name}${prod.price ? ` (${prod.price.toLocaleString()}원)` : ""}`, "success");
+    } catch (e: any) {
+      const msg = e?.name === "TimeoutError" ? "상품 확인 시간이 초과됐어요. 다시 시도해주세요." : (e?.message || "상품 정보를 불러오지 못했어요.");
+      setOnPartnerError(msg); log.push(`온파트너 조회 실패: ${msg}`, "error");
+    } finally { setOnPartnerLoading(false); }
+  }
+  // ② 추가 — 미리보기 상품을 목록에 담는다(최대 3개).
+  function addOnPartnerProduct() {
+    if (!onPartnerPreview) return;
+    if (onPartnerItems.length >= MAX_ONPARTNER) { setOnPartnerError(`상품은 최대 ${MAX_ONPARTNER}개까지 넣을 수 있어요.`); return; }
+    if (onPartnerItems.some((it) => it.product.partnerUrl === onPartnerPreview.product.partnerUrl)) { setOnPartnerError("이미 추가된 상품이에요."); return; }
+    persistOnPartner([...onPartnerItems, onPartnerPreview]);
+    log.push(`온파트너 상품 추가: ${onPartnerPreview.product.name} (총 ${onPartnerItems.length + 1}개)`, "success");
+    setOnPartnerPreview(null); setOnPartnerLink(""); setOnPartnerError("");
+  }
+  function removeOnPartnerProduct(partnerUrl: string) {
+    persistOnPartner(onPartnerItems.filter((it) => it.product.partnerUrl !== partnerUrl));
+  }
+  // 발행에 넣을 온파트너 상품(봇엔 name·partnerUrl만 필요). 조회만 하고 추가(💾) 안 한 미리보기도 포함(퍼블리 안전장치).
+  function buildOnPartnerProducts(): { name: string; partnerUrl: string; banner: string }[] {
+    const src = onPartnerItems.length > 0 ? onPartnerItems : (onPartnerPreview ? [onPartnerPreview] : []);
+    return src.filter((it) => it.product.available && it.product.partnerUrl).map((it) => ({ name: it.product.name, partnerUrl: it.product.partnerUrl, banner: it.banner }));
   }
 
   async function loadCafes() {
@@ -165,10 +220,10 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     setBusy("publish");
     log.push(`━━ 🚀 발행 시작: [${cafeName}] ${boardName} ━━`, "sys", cafeName);
     log.push(`제목: ${title}`, "info", cafeName);
-    const links = [
-      ...(useLink && linkUrl.trim() ? [{ name: linkName.trim() || linkUrl.trim(), url: linkUrl.trim() }] : []),
-      { name: ONPARTNER.name, url: ONPARTNER.url }, // 온파트너 항상 포함(원하면 아래 토글로 뺄 수 있게 추후)
-    ];
+    // 내 링크(일반 사이트)는 links로, 온파트너는 상품카드(onPartnerProducts)로 분리 전달
+    const links = useLink && linkUrl.trim() ? [{ name: linkName.trim() || linkUrl.trim(), url: linkUrl.trim() }] : [];
+    const onPartnerProducts = buildOnPartnerProducts();
+    if (onPartnerProducts.length) log.push(`온파트너 상품 ${onPartnerProducts.length}개 삽입: ${onPartnerProducts.map((p) => p.name).join(", ")}`, "info", cafeName);
     // 🌈 이미지: 연결된 플로우 계정 slot 목록(순서대로, 크레딧 소진 시 다음) + 프롬프트 생성
     let flowSlots: number[] = [];
     let imgPrompts: string[] = [];
@@ -187,7 +242,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         // greeting=인사말(맨 위), body=본문(글·이미지 번갈아), links=온파트너/내링크, faq=질문형식(맨 아래).
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, faq, hashtags, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, onPartnerProducts, faq, hashtags, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
       });
       const d = await res.json();
       // 봇 진단 로그를 화면 로그로
@@ -203,23 +258,21 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
 
   // 발행 1건 요청(순차 발행에서 재사용). 성공 여부 반환.
   async function sendOnePublish(kw: string, post: { title: string; body: string; faq: string; hashtags: string }): Promise<boolean> {
-    const links = [
-      ...(useLink && linkUrl.trim() ? [{ name: linkName.trim() || linkUrl.trim(), url: linkUrl.trim() }] : []),
-      { name: ONPARTNER.name, url: ONPARTNER.url },
-    ];
+    const links = useLink && linkUrl.trim() ? [{ name: linkName.trim() || linkUrl.trim(), url: linkUrl.trim() }] : [];
+    const onPartnerProducts = buildOnPartnerProducts();
     let flowSlots: number[] = [];
     let imgPrompts: string[] = [];
     if (imgCount > 0) {
       const fa = await listFlowAccounts().catch(() => []);
       flowSlots = fa.filter(a => a.connected).map(a => a.slot ?? 0);
-      imgPrompts = buildImgPrompts(imgCount);
+      imgPrompts = buildImgPrompts(imgCount, kw);
     }
     try {
       abortRef.current = new AbortController();
       const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         signal: abortRef.current.signal,
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title: post.title, greeting: useGreeting ? savedGreeting : "", body: post.body, links, faq: post.faq, hashtags: post.hashtags, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title: post.title, greeting: useGreeting ? savedGreeting : "", body: post.body, links, onPartnerProducts, faq: post.faq, hashtags: post.hashtags, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
       });
       const d = await res.json();
       (d.logs || []).forEach((m: string) => log.push(m, m.includes("⚠️") ? "warn" : (m.includes("실패") || m.includes("오류")) ? "error" : "info", cafeName));
@@ -416,13 +469,53 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       {/* 🔗 링크 (온파트너 + 내 링크) */}
       <div style={card}>
         <label style={stepLabel}>🔗 링크 삽입 <span style={{ color: "var(--m-dim)", fontWeight: 400, fontSize: 12 }}>· 본문에 자연스럽게 들어가요</span></label>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, padding: "8px 12px", background: "var(--m-input)", borderRadius: 8, border: "1px solid var(--m-line2)" }}>
-          <span style={{ fontSize: 18 }}>🤝</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ color: "var(--m-text)", fontSize: 13, fontWeight: 700 }}>온파트너 <span style={{ color: "var(--m-log-success)", fontSize: 11 }}>· 항상 포함</span></div>
-            <div style={{ color: "var(--m-dim)", fontSize: 11 }}>{ONPARTNER.url}</div>
+
+        {/* 🤝 온파트너 = 상품 링크 (홈링크 아님). 조회 → 미리보기 → 추가(최대 3개). 발행 시 본문 이미지 사이에 상품카드로 분산 삽입 */}
+        <div style={{ marginBottom: 14, padding: "10px 12px", background: "var(--m-input)", borderRadius: 10, border: "1px solid var(--m-line2)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: 17 }}>🤝</span>
+            <div style={{ color: "var(--m-text)", fontSize: 13, fontWeight: 800 }}>온파트너 상품 <span style={{ color: "var(--m-dim)", fontWeight: 400, fontSize: 11 }}>· 내 추천 상품 링크 (최대 {MAX_ONPARTNER}개)</span></div>
           </div>
+          <p style={{ color: "var(--m-dim)", fontSize: 11, margin: "0 0 8px", lineHeight: 1.5 }}>
+            온파트너 <b style={{ color: "var(--m-sub)" }}>상품 추천 링크</b>(partner.yuanfnb.com/r/…)를 넣고 조회하면, 발행 시 본문 이미지 사이에 <b style={{ color: "var(--m-sub)" }}>상품 카드(썸네일+가격)</b>로 자동 삽입돼 판매 수익으로 이어져요. 글 맨 위엔 제휴 안내 문구가 붙어요.
+          </p>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <input className="moca-in" style={{ ...inputStyle, flex: 1 }} value={onPartnerLink} onChange={(e) => { setOnPartnerLink(e.target.value); setOnPartnerError(""); }} placeholder="온파트너 상품 링크 붙여넣기 (https://partner.yuanfnb.com/r/…)"
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); loadOnPartnerProduct(); } }} disabled={onPartnerItems.length >= MAX_ONPARTNER} />
+            <button className="moca-w-btn" onClick={loadOnPartnerProduct} disabled={onPartnerLoading || onPartnerItems.length >= MAX_ONPARTNER}
+              style={{ background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 8, padding: "0 16px", fontSize: 13, fontWeight: 800, cursor: onPartnerLoading ? "wait" : "pointer", whiteSpace: "nowrap", opacity: onPartnerItems.length >= MAX_ONPARTNER ? 0.5 : 1 }}>
+              {onPartnerLoading ? "조회 중…" : "🔍 조회"}
+            </button>
+          </div>
+          {onPartnerError && <div style={{ color: "var(--m-log-error)", fontSize: 12, marginBottom: 8 }}>⚠️ {onPartnerError}</div>}
+
+          {/* 미리보기(조회했으나 아직 추가 전) */}
+          {onPartnerPreview && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 8, marginBottom: 8, background: "var(--m-panel)", borderRadius: 8, border: "1px dashed var(--m-gold)" }}>
+              {onPartnerPreview.product.image && <img src={onPartnerPreview.product.image} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} />}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: "var(--m-text)", fontSize: 12.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{onPartnerPreview.product.name}</div>
+                <div style={{ color: "var(--m-dim)", fontSize: 11 }}>{onPartnerPreview.product.price ? `${onPartnerPreview.product.price.toLocaleString()}원` : ""} {onPartnerPreview.product.available ? "" : "· ⚠️ 품절/판매불가"}</div>
+              </div>
+              <button className="moca-w-btn" onClick={addOnPartnerProduct} disabled={!onPartnerPreview.product.available}
+                style={{ background: "var(--m-log-success)", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap", opacity: onPartnerPreview.product.available ? 1 : 0.5 }}>➕ 추가</button>
+            </div>
+          )}
+
+          {/* 추가된 상품 목록 */}
+          {onPartnerItems.map((it) => (
+            <div key={it.product.partnerUrl} style={{ display: "flex", alignItems: "center", gap: 10, padding: 8, marginBottom: 6, background: "var(--m-panel)", borderRadius: 8, border: "1px solid var(--m-line)" }}>
+              {it.product.image && <img src={it.product.image} alt="" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} />}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: "var(--m-text)", fontSize: 12.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.product.name}</div>
+                <div style={{ color: "var(--m-dim)", fontSize: 11 }}>{it.product.price ? `${it.product.price.toLocaleString()}원` : ""}</div>
+              </div>
+              <button className="moca-w-btn" onClick={() => removeOnPartnerProduct(it.product.partnerUrl)}
+                style={{ background: "transparent", color: "var(--m-log-error)", border: "1px solid var(--m-line2)", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>🗑️ 삭제</button>
+            </div>
+          ))}
         </div>
+
         <label style={labelStyle}>내 링크 (일반 사이트)</label>
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <input className="moca-in" style={{ ...inputStyle, flex: 1 }} value={linkName} onChange={(e) => setLinkName(e.target.value)} placeholder="링크 이름 (예: 내 블로그)" />
