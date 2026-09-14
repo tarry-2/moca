@@ -642,13 +642,14 @@ export interface PublishCafeParams {
   imgCount?: number;  // 플로우로 만들 이미지 장수(본문 끝에 삽입)
   imgPrompts?: string[]; // 이미지 생성 프롬프트(imgCount개)
   flowSlots?: number[];  // 사용할 플로우 계정 slot 목록(순서대로, 크레딧 소진 시 다음)
+  draftOnly?: boolean;   // true=임시등록(테스트용, 실제 공개 안 함) / false=실제 등록
   showWindow?: boolean;
   onShot?: (caption: string, dataUrl: string) => void;
   onLog?: (msg: string) => void;
 }
 
 export async function publishCafe(params: PublishCafeParams): Promise<{ url: string }> {
-  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], faq = "", imgCount = 0, imgPrompts = [], flowSlots = [], showWindow = false, onShot, onLog = console.log } = params;
+  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], faq = "", imgCount = 0, imgPrompts = [], flowSlots = [], draftOnly = false, showWindow = false, onShot, onLog = console.log } = params;
   // 최종 본문 조립: 인사말 → 본문 → 링크 → (이미지 N장 삽입) → FAQ(질문형식). 지금은 텍스트 기준 로그만.
   const linkText = links.length ? "\n\n" + links.map(l => `▶ ${l.name}: ${l.url}`).join("\n") : "";
   const content = [greeting, body, linkText, faq].filter(s => s && s.trim()).join("\n\n");
@@ -755,15 +756,55 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
       if (!j.includes('"error"') || fi === 0) onLog(`[cafe][진단] frame#${fi} (${(fr.name() || fr.url().slice(0, 30))}): ${j}`);
     }
 
-    // ⚠️ 여기까지가 1차(구조 파악). 실제 입력/발행은 위 진단 로그로 셀렉터 확정 후 다음 버전에서 연결.
-    // 지금은 안전하게 "발행 직전"까지만 가고 실제 등록은 하지 않는다(오발행 방지).
-    // 배치 순서(테리 확정): 제목 → 썸네일(첫 이미지) → 인사말 → 본문 글/이미지 번갈아 → (본문 끝) → 바로 FAQ(질문, 이미지 없음)
-    onLog(`[cafe] 📐 배치: 제목 → 썸네일(이미지1) → ${greeting ? "인사말 → " : ""}본문(글·이미지 번갈아, 이미지 ${flowImages.length || imgCount}장) → 본문 끝나면 바로 ❓FAQ${faq ? "" : "(없음)"}`);
-    onLog(`[cafe] ⚠️ 발행 직전까지 도달(진단 모드). 제목="${title}" / 본문 ${body.length}자 / 생성이미지 ${flowImages.length}장 / 링크 ${links.length}개 / FAQ ${faq ? "있음" : "없음"} / 총 ${content.length}자. 실제 등록은 에디터 셀렉터 확정 후 연결.`);
-    await shot("발행 직전(진단 모드)");
+    // ── ✍️ 실제 입력 (셀렉터 확정: 제목=textarea.textarea_input, 본문=.se-section-text [contenteditable], 등록=a.BaseButton--skinGreen) ──
+    onLog(`[cafe] 📐 배치: 제목 → ${greeting ? "인사말 → " : ""}본문 → ${links.length ? "링크 → " : ""}${faq ? "FAQ" : ""} ${draftOnly ? "(임시등록)" : "(실제 등록)"}`);
+
+    // 1) 제목
+    const titleEl = page.locator("textarea.textarea_input, input[placeholder*='제목'], textarea[placeholder*='제목']").first();
+    await titleEl.waitFor({ state: "visible", timeout: 15000 });
+    await titleEl.click();
+    await page.waitForTimeout(300);
+    await page.keyboard.type(title, { delay: 20 });
+    onLog(`[cafe] ✅ 제목 입력: ${title}`);
+    await shot("제목 입력");
+
+    // 2) 본문 = 인사말 + 본문 + 링크 + FAQ (문단별 입력, 스마트에디터는 fill 안 먹음)
+    const bodyText = [greeting, body, linkText.trim(), faq].filter(s => s && s.trim()).join("\n\n");
+    const editorEl = page.locator(".se-section-text [contenteditable='true'], .se-content [contenteditable='true'], .se-main-container .se-component [contenteditable='true']").first();
+    await editorEl.waitFor({ state: "visible", timeout: 15000 });
+    await editorEl.click();
+    await page.waitForTimeout(400);
+    const lines = bodyText.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i]) await page.keyboard.type(lines[i], { delay: 8 });
+      if (i < lines.length - 1) await page.keyboard.press("Enter");
+    }
+    onLog(`[cafe] ✅ 본문 입력 완료 (${bodyText.length}자)`);
+    await shot("본문 입력 완료");
+
+    // ⚠️ 이미지 삽입은 다음 단계(클립보드/업로드). 지금은 텍스트 발행 우선.
+    if (flowImages.length) onLog(`[cafe] ℹ️ 생성 이미지 ${flowImages.length}장은 다음 버전에서 본문에 삽입(현재는 텍스트만)`);
+
+    // 3) 등록(또는 임시등록)
+    await page.waitForTimeout(600);
+    const submitSel = draftOnly ? "button.btn_temp_save" : "a.BaseButton--skinGreen";
+    const submitEl = page.locator(submitSel).first();
+    await submitEl.waitFor({ state: "visible", timeout: 10000 });
+    onLog(`[cafe] ${draftOnly ? "임시등록" : "등록"} 버튼 클릭…`);
+    await submitEl.click();
+    await page.waitForTimeout(3000);
+    // 확인 팝업이 뜨면 확인 클릭
+    try {
+      const confirmEl = page.locator("button.BaseButton--green, a.BaseButton--skinGreen").filter({ hasText: "확인" }).first();
+      if (await confirmEl.count()) { await confirmEl.click(); await page.waitForTimeout(1500); }
+    } catch {}
+
+    const finalUrl = page.url();
+    onLog(`[cafe] 🎉 ${draftOnly ? "임시등록" : "발행"} 완료! URL: ${finalUrl}`);
+    await shot(draftOnly ? "임시등록 완료" : "발행 완료");
 
     await browser.close();
-    return { url: "(진단 모드 — 실제 발행 안 함)" };
+    return { url: finalUrl };
   } catch (e) {
     await shot("오류 발생 시점").catch(() => {});
     await browser.close().catch(() => {});

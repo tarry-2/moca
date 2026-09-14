@@ -45,6 +45,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [linkUrl, setLinkUrl] = useState(() => localStorage.getItem("moca_link_url") || "");
   const [useGreeting, setUseGreeting] = useState(true);
   const [useLink, setUseLink] = useState(true);
+  const [draftOnly, setDraftOnly] = useState(true); // 처음엔 안전하게 임시등록 기본 ON
   const ONPARTNER = { name: "온파트너", url: "https://partner.yuanfnb.com" };
 
   const accId = [...selected][0];
@@ -147,7 +148,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         // greeting=인사말(맨 위), body=본문(글·이미지 번갈아), links=온파트너/내링크, faq=질문형식(맨 아래).
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, faq, imgCount, imgPrompts, flowSlots, showWindow: showWindowState }),
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, faq, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
       });
       const d = await res.json();
       // 봇 진단 로그를 화면 로그로
@@ -321,9 +322,20 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
         </div>
       </div>
 
+      {/* 발행 모드 토글 */}
+      <div style={{ ...card, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: "var(--m-text)", cursor: "pointer", fontWeight: 700 }}>
+          <input type="checkbox" checked={draftOnly} onChange={(e) => setDraftOnly(e.target.checked)} style={{ width: "auto" }} />
+          🧪 임시등록으로 테스트 (실제 공개 안 함)
+        </label>
+        <span style={{ color: "var(--m-dim)", fontSize: 12 }}>
+          {draftOnly ? "체크 해제하면 실제로 카페에 공개 발행돼요" : "⚠️ 실제 공개 발행 모드"}
+        </span>
+      </div>
+
       {/* 발행 */}
-      <button className="moca-w-btn" disabled={busy === "publish"} onClick={publish} style={{ width: "100%", background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 10, padding: "15px", fontSize: 16, fontWeight: 800, cursor: busy === "publish" ? "default" : "pointer", opacity: busy === "publish" ? 0.6 : 1 }}>
-        {busy === "publish" ? "발행 중…" : `🚀 카페에 발행${imgCount ? ` (이미지 ${imgCount}장)` : ""}`}
+      <button className="moca-w-btn" disabled={busy === "publish"} onClick={publish} style={{ width: "100%", background: draftOnly ? "var(--m-tabhover)" : "var(--m-gold)", color: draftOnly ? "var(--m-text)" : "var(--m-goldink)", border: draftOnly ? "1px solid var(--m-line2)" : "none", borderRadius: 10, padding: "15px", fontSize: 16, fontWeight: 800, cursor: busy === "publish" ? "default" : "pointer", opacity: busy === "publish" ? 0.6 : 1 }}>
+        {busy === "publish" ? "발행 중…" : draftOnly ? `🧪 임시등록 테스트${imgCount ? ` (이미지 ${imgCount}장)` : ""}` : `🚀 카페에 발행${imgCount ? ` (이미지 ${imgCount}장)` : ""}`}
       </button>
       <p style={{ color: "var(--m-dim)", fontSize: 11.5, textAlign: "center", marginTop: 8 }}>발행봇(에디터 조작 + 창보기/캡처)은 실계정 검증과 함께 연결 예정</p>
     </div>
