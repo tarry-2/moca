@@ -63,13 +63,14 @@ export async function generateCafePost(keyword: string, cafeName: string, boardN
 2) 본문(body) 맨 처음: 인사말·서론 없이 "핵심 요약" 2~3문장부터(질문의 답을 먼저).
 3) 본문 중간(30~70% 지점)에 번호 목록(① ② ③ 최소 3개) 또는 "항목: 값"(예: 가격: 1만원) 실용정보 블록을 최소 1개.
 4) 각 소제목 아래 첫 문장은 결론부터(두괄식). 광고 티 없이 실제 경험담 톤(반말 아님).
-5) 본문(body)은 ${lo}~${hi}자(목표 약 ${lengthChars}자), 문단은 빈 줄로 구분, 이모지 적당히. ★본문은 여기서 완결(질문 없이 마무리 인사로 끝).
+5) 본문(body)은 목표 약 ${lengthChars}자(${lo}~${hi}자 범위 준수, ${hi}자를 크게 넘기지 말 것). 단, 글자수 맞추려고 문장을 중간에 끊지 말고 반드시 자연스럽게 완결할 것. 문단은 빈 줄로 구분, 이모지 적당히. ★본문은 여기서 완결(질문 없이 마무리 인사로 끝).
 6) FAQ(faq): 본문과 별개로, "자주 묻는 질문" Q&A 4개. Q는 사람들이 실제 검색할 질문, A는 핵심부터 1~2문장.
    형식: "자주 묻는 질문\nQ1. ...\nA1. ...\nQ2. ...\nA2. ...\nQ3. ...\nA3. ...\nQ4. ...\nA4. ..."
 
 반드시 아래 JSON 형식으로만 답해(다른 말·마크다운 금지):
 {"title":"제목","body":"본문(질문 없이 마무리)","faq":"자주 묻는 질문\\nQ1. ...\\nA1. ..."}`;
-  const raw = await generateText(prompt, onLog);
+  let raw = await generateText(prompt, onLog);
+  raw = raw.replace(/```json/gi, "").replace(/```/g, "").trim(); // 코드펜스 제거(파싱 실패 방지)
   try {
     const m = raw.match(/\{[\s\S]*\}/);
     if (m) {

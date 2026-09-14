@@ -692,20 +692,39 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     if (!loaded) throw new Error("글쓰기 페이지 진입 실패(신형/구형 모두)");
     await shot("글쓰기 페이지 진입");
 
-    // 🔍 DOM 진단: 프레임 목록 + 제목/본문/버튼 후보 셀렉터 존재 여부를 로그로
+    // 🔍 DOM 진단: 모든 프레임을 훑어 제목/본문/버튼 후보를 찾는다(순수 CSS만 사용).
     const frames = page.frames();
-    onLog(`[cafe][진단] 프레임 ${frames.length}개: ${frames.map(f => f.name() || f.url().slice(0, 40)).join(" | ")}`);
+    onLog(`[cafe][진단] 프레임 ${frames.length}개: ${frames.map(f => (f.name() || f.url().slice(0, 45))).join(" | ")}`);
 
-    const diag = await page.evaluate(() => {
-      const check = (sels: string[]) => sels.map(s => ({ s, n: document.querySelectorAll(s).length }));
-      return {
-        title: check(["textarea.textarea_input", ".article_title input", "input[placeholder*='제목']", ".se-title-input", "#subject"]),
-        editor: check([".se-content", ".se_component_wrap", "iframe#SmartEditorIframe", ".ProseMirror", "textarea#content"]),
-        submit: check(["a.BaseButton--skinGreen", "button.btn_register", "a:has-text('등록')", ".btn_area button", "[class*='writeButton']"]),
-        iframes: Array.from(document.querySelectorAll("iframe")).map(f => (f as HTMLIFrameElement).id || (f as HTMLIFrameElement).name || (f as HTMLIFrameElement).src.slice(0, 40)),
-      };
-    }).catch((e) => ({ error: String(e) }));
-    onLog(`[cafe][진단] DOM 후보: ${JSON.stringify(diag)}`);
+    for (let fi = 0; fi < frames.length; fi++) {
+      const fr = frames[fi];
+      const diag = await fr.evaluate(() => {
+        const cnt = (sel: string) => { try { return document.querySelectorAll(sel).length; } catch { return -1; } };
+        // 텍스트로 '등록/저장/확인' 버튼 후보 찾기(has-text 대신 순수 JS)
+        const btns = Array.from(document.querySelectorAll("button, a, [role='button']"))
+          .filter(el => /등록|저장|발행|확인/.test((el.textContent || "").trim()))
+          .slice(0, 6)
+          .map(el => ({ tag: el.tagName.toLowerCase(), cls: (el.className || "").toString().slice(0, 40), txt: (el.textContent || "").trim().slice(0, 12) }));
+        return {
+          title: {
+            textarea_input: cnt("textarea.textarea_input"),
+            ph제목: cnt("input[placeholder*='제목'], textarea[placeholder*='제목']"),
+            se_title: cnt(".se-title-text, .se_title, .se-title-input"),
+            subject: cnt("#subject, input[name='subject']"),
+          },
+          editor: {
+            se_content: cnt(".se-content"),
+            ProseMirror: cnt(".ProseMirror"),
+            se_component: cnt(".se-component, .se_component_wrap"),
+            editable: cnt("[contenteditable='true']"),
+          },
+          buttons: btns,
+        };
+      }).catch((e) => ({ error: String(e).slice(0, 100) }));
+      // 뭔가 발견된 프레임만 로그(빈 프레임 스킵)
+      const j = JSON.stringify(diag);
+      if (!j.includes('"error"') || fi === 0) onLog(`[cafe][진단] frame#${fi} (${(fr.name() || fr.url().slice(0, 30))}): ${j}`);
+    }
 
     // ⚠️ 여기까지가 1차(구조 파악). 실제 입력/발행은 위 진단 로그로 셀렉터 확정 후 다음 버전에서 연결.
     // 지금은 안전하게 "발행 직전"까지만 가고 실제 등록은 하지 않는다(오발행 방지).
