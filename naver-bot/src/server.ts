@@ -173,6 +173,16 @@ app.post("/api/cafe/boards", async (req, res) => {
 });
 
 
+/* ── ☕ 카페: 발행 취소(진행 중 browser 즉시 종료 → 좀비 방지) ── */
+let activeCafeBrowsers: import("playwright").Browser[] = [];
+app.post("/api/cafe/cancel", async (_req, res) => {
+  const n = activeCafeBrowsers.length;
+  console.log(`[cafe] 🛑 취소 요청 — 진행 중 브라우저 ${n}개 종료`);
+  for (const b of activeCafeBrowsers) { try { await b.close(); } catch {} }
+  activeCafeBrowsers = [];
+  res.json({ ok: true, closed: n });
+});
+
 /* ── ☕ 카페: 글 발행(진단 모드) ── */
 app.post("/api/cafe/publish", async (req, res) => {
   const finishWork = beginWork();
@@ -193,6 +203,7 @@ app.post("/api/cafe/publish", async (req, res) => {
         showWindow: showWindow === true || showWindow === "true",
         onLog: (m) => { logs.push(m); console.log(m); },
         onShot: (caption, dataUrl) => { shots.push({ caption, dataUrl }); },
+        onBrowser: (b) => { activeCafeBrowsers.push(b); b.on("disconnected", () => { activeCafeBrowsers = activeCafeBrowsers.filter(x => x !== b); }); },
       });
       res.json({ success: true, url: r.url, logs, shots });
     } catch (e: any) {

@@ -647,10 +647,11 @@ export interface PublishCafeParams {
   showWindow?: boolean;
   onShot?: (caption: string, dataUrl: string) => void;
   onLog?: (msg: string) => void;
+  onBrowser?: (b: import("playwright").Browser) => void; // 서버가 browser를 잡아 취소 시 즉시 죽이게
 }
 
 export async function publishCafe(params: PublishCafeParams): Promise<{ url: string }> {
-  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], faq = "", hashtags = "", imgCount = 0, imgPrompts = [], flowSlots = [], draftOnly = false, showWindow = false, onShot, onLog = console.log } = params;
+  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], faq = "", hashtags = "", imgCount = 0, imgPrompts = [], flowSlots = [], draftOnly = false, showWindow = false, onShot, onLog = console.log, onBrowser } = params;
   // 최종 본문 조립: 인사말 → 본문 → 링크 → (이미지 N장 삽입) → FAQ(질문형식) → 해시태그(맨끝).
   const linkText = links.length ? "\n\n" + links.map(l => `▶ ${l.name}: ${l.url}`).join("\n") : "";
   const content = [greeting, body, linkText, faq, hashtags].filter(s => s && s.trim()).join("\n\n");
@@ -692,6 +693,7 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     args: [...LAUNCH_ARGS, "--start-maximized"],
     slowMo: showWindow ? 60 : 20,
   });
+  onBrowser?.(browser); // ★서버가 이 browser를 잡음 → 취소 시 즉시 close(좀비 방지)
   const context = await browser.newContext({ userAgent: UA, viewport: { width: 1280, height: 900 }, locale: "ko-KR", timezoneId: "Asia/Seoul" });
   await applyAntiDetection(context);
   await context.addCookies(cookies);

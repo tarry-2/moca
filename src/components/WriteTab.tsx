@@ -506,7 +506,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
             style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 9, padding: "11px", fontSize: 14, fontWeight: 700, cursor: runState !== "paused" ? "default" : "pointer", opacity: runState !== "paused" ? 0.5 : 1 }}>
             ⏭ 이어가기
           </button>
-          <button className="moca-w-btn" disabled={runState === "idle"} onClick={() => { stopRef.current = true; pauseRef.current = false; abortRef.current?.abort(); setRunState("idle"); setWaitInfo(""); log.push("🛑 즉시 취소됨", "error"); }}
+          <button className="moca-w-btn" disabled={runState === "idle"} onClick={() => { stopRef.current = true; pauseRef.current = false; abortRef.current?.abort(); botFetch(`${BOT_BASE}/api/cafe/cancel`, { method: "POST" }).catch(() => {}); setRunState("idle"); setWaitInfo(""); log.push("🛑 즉시 취소됨 (봇 크롬도 종료)", "error"); }}
             style={{ gridColumn: "1/3", background: runState === "idle" ? "var(--m-tabhover)" : "var(--m-log-error)", color: runState === "idle" ? "var(--m-sub)" : "#fff", border: "none", borderRadius: 9, padding: "11px", fontSize: 14, fontWeight: 700, cursor: runState === "idle" ? "default" : "pointer" }}>
             🛑 취소 (즉시)
           </button>
