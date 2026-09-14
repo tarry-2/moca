@@ -55,6 +55,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const stopRef = useRef(false);   // 취소
   const pauseRef = useRef(false);  // 정지
   const resumeIdxRef = useRef(0);  // 이어가기 시작 인덱스
+  const abortRef = useRef<AbortController | null>(null); // 진행 중 봇 요청 즉시 중단용
   // ⏰ 예약·텀(간격) — 앱 켜둔 상태 예약. 텀=밴 방지(연속 도배 금지)
   const [useSchedule, setUseSchedule] = useState(false);
   const [scheduleAt, setScheduleAt] = useState(""); // datetime-local
@@ -195,8 +196,10 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       imgPrompts = Array.from({ length: imgCount }, (_, i) => `${kw} 관련 ${angles[i % angles.length]}, 텍스트 없이`);
     }
     try {
+      abortRef.current = new AbortController();
       const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
         method: "POST", headers: { "Content-Type": "application/json" },
+        signal: abortRef.current.signal,
         body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title: post.title, greeting: useGreeting ? savedGreeting : "", body: post.body, links, faq: post.faq, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
       });
       const d = await res.json();
@@ -204,7 +207,10 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       (d.shots || []).forEach((s: any) => log.shot(s.caption, s.dataUrl, cafeName));
       if (d.success) { log.push(`✅ 발행 완료: ${d.url}`, "success", cafeName); return true; }
       log.push(`발행 실패: ${d.error || "?"}`, "error", cafeName); return false;
-    } catch (e: any) { log.push(`봇 연결 실패: ${e?.message || e}`, "error", cafeName); return false; }
+    } catch (e: any) {
+      if (e?.name === "AbortError") { log.push("🛑 발행 즉시 중단됨", "warn", cafeName); return false; }
+      log.push(`봇 연결 실패: ${e?.message || e}`, "error", cafeName); return false;
+    } finally { abortRef.current = null; }
   }
 
   // 중단 가능한 대기(1초마다 취소/정지 체크). 취소=false 반환(중단), 완료=true.
@@ -251,6 +257,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
         const post = await generateCafePost(kws[i], cafeName || "카페", boardName || "게시판", lengthChars, (m) => log.push(m, "progress"));
         log.push(`[${i + 1}/${kws.length}] 제목: ${post.title}`, "info", cafeName);
         const success = await sendOnePublish(kws[i], post);
+        if (stopRef.current) { log.push(`🛑 취소됨 (완료 ${ok}·실패 ${fail})`, "warn", cafeName); setRunState("idle"); setWaitInfo(""); return; }
         if (success) ok++; else fail++;
       } catch (e: any) { fail++; log.push(`[${i + 1}] 생성 실패: ${e?.message || e}`, "error", cafeName); }
       setSeqProg({ idx: i + 1, total: kws.length, ok, fail });
@@ -494,9 +501,9 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
             style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 9, padding: "11px", fontSize: 14, fontWeight: 700, cursor: runState !== "paused" ? "default" : "pointer", opacity: runState !== "paused" ? 0.5 : 1 }}>
             ⏭ 이어가기
           </button>
-          <button className="moca-w-btn" disabled={runState === "idle"} onClick={() => { stopRef.current = true; pauseRef.current = false; log.push("🛑 취소 요청 — 현재 글 끝나면 중단", "error"); }}
+          <button className="moca-w-btn" disabled={runState === "idle"} onClick={() => { stopRef.current = true; pauseRef.current = false; abortRef.current?.abort(); setRunState("idle"); setWaitInfo(""); log.push("🛑 즉시 취소됨", "error"); }}
             style={{ gridColumn: "1/3", background: runState === "idle" ? "var(--m-tabhover)" : "var(--m-log-error)", color: runState === "idle" ? "var(--m-sub)" : "#fff", border: "none", borderRadius: 9, padding: "11px", fontSize: 14, fontWeight: 700, cursor: runState === "idle" ? "default" : "pointer" }}>
-            🛑 취소
+            🛑 취소 (즉시)
           </button>
         </div>
         <p style={{ color: "var(--m-dim)", fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
