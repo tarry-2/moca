@@ -81,7 +81,7 @@ async function botHealth(port: number, timeoutMs = 2500): Promise<HealthState> {
     if (res.ok) {
       const body = await res.json() as { busy?: boolean; running?: number; queued?: number };
       const bot = botRegistry.find(entry => entry.port === port);
-      if (bot && !(bot.port === 3333 && bot.isAlive())) bot.busy = body.busy === true || (body.running || 0) > 0 || (body.queued || 0) > 0;
+      if (bot && !(bot.port === 3383 && bot.isAlive())) bot.busy = body.busy === true || (body.running || 0) > 0 || (body.queued || 0) > 0;
       return "online";
     }
     if (res.status === 401) {
@@ -243,7 +243,7 @@ async function forkBotServer(opts: {
   let entry: BotEntry;
   const restart = (reason: "initial" | "scheduled" | "watchdog" | "manual"): Promise<boolean> => {
     // 워치독뿐 아니라 IPC 수동 재시작/예약 재시작도 실행 중 발행을 종료하지 않는다.
-    if (entry?.port === 3333 && entry.busy && entry.isAlive()) {
+    if (entry?.port === 3383 && entry.busy && entry.isAlive()) {
       console.warn(`[${opts.name}] 작업 중 → ${reason} 재시작 보류`);
       return Promise.resolve(false);
     }
@@ -257,7 +257,7 @@ async function forkBotServer(opts: {
     // 각 프로세스 종료/명령에는 자체 제한 시간이 있다. 타임아웃 race로 잠금을 먼저 풀지 않는다.
     const core = (async () => {
       if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
-      if (entry.port === 3333 && entry.busy && entry.isAlive()) return true;
+      if (entry.port === 3383 && entry.busy && entry.isAlive()) return true;
       const oldChild = opts.getProc();
       generation++;
       if (oldChild) expectedExits.add(oldChild);
@@ -359,7 +359,7 @@ async function startBotServer() {
     name: "bot",
     botPath: resourceDir("naver-bot"),
     chromiumPath: resourceDir("chromium"),
-    port: 3333,
+    port: 3383,
     getProc: () => botProcess,
     setProc: p => { botProcess = p; },
   });
@@ -454,7 +454,7 @@ function shutdownBots(): Promise<void> {
   app.isQuitting = true;
   for (const bot of botRegistry) bot.cancelScheduledRestart();
   shutdownPromise = Promise.all([
-    killPort(3333, botProcess),
+    killPort(3383, botProcess),
   ]).then(() => undefined);
   return shutdownPromise;
 }
@@ -476,14 +476,14 @@ app.on("before-quit", event => {
 
 ipcMain.handle("get-bot-status", async () => {
   try {
-    const res = await fetch("http://127.0.0.1:3333/health", { headers: { Authorization: `Bearer ${botAuthToken}` }, signal: AbortSignal.timeout(2000) });
+    const res = await fetch("http://127.0.0.1:3383/health", { headers: { Authorization: `Bearer ${botAuthToken}` }, signal: AbortSignal.timeout(2000) });
     return res.ok ? "online" : "offline";
   } catch { return "offline"; }
 });
 
 // 봇 상태(발행). 탭별로 정확한 온·오프라인 표시용.
 ipcMain.handle("get-all-bot-status", async () => {
-  const ports = { publish: 3333 };
+  const ports = { publish: 3383 };
   const out: Record<string, "online" | "offline"> = {};
   await Promise.all(Object.entries(ports).map(async ([k, p]) => {
     out[k] = (await pingBot(p)) ? "online" : "offline";
@@ -617,7 +617,7 @@ ipcMain.handle("read-bot-log", async () => {
 
 ipcMain.handle("register-user", async (_event, userId: string) => {
   try {
-    const res = await fetch("http://127.0.0.1:3333/api/register-user", {
+    const res = await fetch("http://127.0.0.1:3383/api/register-user", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${botAuthToken}` },
       body: JSON.stringify({ userId }),
@@ -680,7 +680,7 @@ ipcMain.handle("save-report-pdf", async (_event, html: string, filename: string)
 
 ipcMain.handle("unregister-user", async (_event, userId: string) => {
   try {
-    const res = await fetch("http://127.0.0.1:3333/api/unregister-user", {
+    const res = await fetch("http://127.0.0.1:3383/api/unregister-user", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${botAuthToken}` },
       body: JSON.stringify({ userId }),

@@ -53,7 +53,7 @@ process.on("uncaughtException", (err: any) => {
 });
 
 const app = express();
-const PORT = 3333;
+const PORT = 3383; // 🔴 모카 전용 봇 포트(퍼블리3333·트래픽3363·골든시드3363대와 충돌 방지 → 동시 실행 가능)
 const AUTH_TOKEN = process.env.BOT_AUTH_TOKEN || "";
 
 app.use(cors({ origin: ["http://localhost:5173", "http://127.0.0.1:5173", "null"] }));
