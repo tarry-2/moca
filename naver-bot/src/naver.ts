@@ -657,30 +657,37 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
   const content = [greeting, body, linkText, faq, hashtags].filter(s => s && s.trim()).join("\n\n");
 
   // ── 🌈 플로우 이미지 생성 (발행 흐름 안에서) ──
-  //    연결된 플로우 계정 slot을 순서대로 시도 → 크레딧 소진(FLOW_NO_CREDIT)이면 다음 계정 → 다 쓰면 이미지 없이 진행.
+  //    ★목표 장수(imgCount)를 채울 때까지 계정을 순회한다. 한 계정이 부족분만 만들면(크레딧/정책) 다음 계정에서 나머지.
   let flowImages: { src: string; alt: string }[] = [];
   if (imgCount > 0 && imgPrompts.length > 0) {
-    onLog(`[cafe] 🌈 이미지 ${imgCount}장 생성 시작 (플로우 계정 ${flowSlots.length}개 순차)`);
     const slots = flowSlots.length ? flowSlots : [0];
+    onLog(`[cafe] 🌈 이미지 ${imgCount}장 생성 시작 (플로우 계정 ${slots.length}개 순차, 부족하면 다음 계정)`);
     for (const slot of slots) {
+      if (flowImages.length >= imgCount) break; // 이미 다 채움
+      const need = imgCount - flowImages.length;
+      const remainPrompts = imgPrompts.slice(flowImages.length); // 남은 프롬프트만
       const port = 9222 + slot;
-      onLog(`[cafe] [slot ${slot}] 이미지 생성 시도 (포트 ${port})…`);
+      onLog(`[cafe] [slot ${slot}] 이미지 ${need}장 생성 시도 (포트 ${port}, 현재 ${flowImages.length}/${imgCount})…`);
       try {
-        const imgs = await generateFlowImagesCDP({ prompts: imgPrompts, captions: [], cdpPort: port, onLog });
+        const imgs = await generateFlowImagesCDP({ prompts: remainPrompts, captions: [], cdpPort: port, onLog });
         if (imgs.length > 0) {
-          flowImages = imgs.map((im: any) => ({ src: im.src, alt: im.alt || "" }));
-          onLog(`[cafe] [slot ${slot}] ✅ 이미지 ${imgs.length}장 생성 성공`);
-          if (onShot && flowImages[0]?.src?.startsWith("data:")) onShot("생성된 이미지 1", flowImages[0].src);
-          break;
+          const before = flowImages.length;
+          for (const im of imgs) flowImages.push({ src: im.src, alt: im.alt || "" });
+          onLog(`[cafe] [slot ${slot}] ✅ ${imgs.length}장 확보 (총 ${flowImages.length}/${imgCount})`);
+          if (onShot && flowImages[before]?.src?.startsWith("data:")) onShot(`생성된 이미지 ${before + 1}`, flowImages[before].src);
+          if (imgs.length < need) onLog(`[cafe] [slot ${slot}] 부족분 ${need - imgs.length}장 → 다음 계정에서 채움`);
+        } else {
+          onLog(`[cafe] [slot ${slot}] 이미지 0장 → 다음 계정`);
         }
-        onLog(`[cafe] [slot ${slot}] 이미지 0장 → 다음 계정`);
       } catch (e: any) {
         const msg = String(e?.message || e);
         if (/FLOW_NO_CREDIT|FLOW_POLICY_STUCK/.test(msg)) { onLog(`[cafe] [slot ${slot}] ⚠️ 토큰 소진 → 다음 계정`); continue; }
         onLog(`[cafe] [slot ${slot}] 생성 실패: ${msg.slice(0, 80)} → 다음 계정`);
       }
     }
-    if (!flowImages.length) onLog(`[cafe] 🛑 모든 플로우 계정 토큰 소진 — 이미지 없이 글만 발행`);
+    if (!flowImages.length) onLog(`[cafe] 🛑 모든 플로우 계정 실패 — 이미지 없이 글만 발행`);
+    else if (flowImages.length < imgCount) onLog(`[cafe] ⚠️ 목표 ${imgCount}장 중 ${flowImages.length}장만 확보(계정 부족) — 있는 만큼 발행`);
+    else onLog(`[cafe] ✅ 이미지 ${flowImages.length}장 전부 확보`);
   }
   if (!naverSessionExists(userId)) throw new Error("네이버 세션 없음(먼저 계정 로그인)");
   const session = readSession<any>(naverSessionName(userId), LEGACY_SESSION_DIRS);
@@ -838,27 +845,38 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     const uploadImages = async (files: string[]) => {
       if (!files.length) return;
       onLog(`[cafe] 🖼️ 이미지 ${files.length}장 업로드 시작…`);
-      try {
-        // 툴바 '사진' 버튼 클릭(여러 후보)
-        const photoSelectors = ["button:has-text('사진')", "[data-name='image']", "button[data-log*='image']", ".se-toolbar-item-image button", "[class*='image'] button"];
-        let clicked = false;
+      const photoSelectors = ["button:has-text('사진')", "button[aria-label*='사진']", "[data-name='image']", "button[data-log*='image']", ".se-toolbar-item-image button"];
+      let uploaded = false;
+      // 1) 숨은 input[type=file] 직접 주입(다이얼로그 안 뜸, 제일 안전)
+      const fiDirect = page.locator("input[type='file']").first();
+      if (await fiDirect.count().catch(() => 0)) {
+        try {
+          await fiDirect.setInputFiles(files, { timeout: 5000 });
+          uploaded = true;
+          onLog(`[cafe] 파일 ${files.length}장 주입(숨은 input) → 업로드 대기…`);
+        } catch { onLog(`[cafe] 숨은 input 주입 실패 → 사진 버튼+파일창 가로채기 시도`); }
+      }
+      // 2) 안 되면 사진 버튼 클릭 시 뜨는 OS 파일창을 filechooser로 가로채 자동 주입
+      if (!uploaded) {
         for (const sel of photoSelectors) {
           const b = page.locator(sel).first();
-          if (await b.count().catch(() => 0)) { try { await b.click({ timeout: 3000 }); clicked = true; onLog(`[cafe] 사진 버튼 클릭: ${sel}`); break; } catch {} }
+          if (!(await b.count().catch(() => 0))) continue;
+          try {
+            const [fc] = await Promise.all([
+              page.waitForEvent("filechooser", { timeout: 7000 }),
+              b.click({ timeout: 3000 }),
+            ]);
+            await fc.setFiles(files);
+            uploaded = true;
+            onLog(`[cafe] 사진 버튼(${sel})+파일창 가로채기로 ${files.length}장 주입 → 업로드 대기…`);
+            break;
+          } catch { onLog(`[cafe] ${sel} 파일창 가로채기 실패 → 다음 후보`); }
         }
-        await page.waitForTimeout(1000);
-        // file input 찾아 파일 주입(사진 버튼 없이도 숨은 input 있을 수 있음)
-        const fi = page.locator("input[type='file']").first();
-        if (await fi.count().catch(() => 0)) {
-          await fi.setInputFiles(files);
-          onLog(`[cafe] 파일 ${files.length}장 주입 → 업로드 대기…`);
-          await page.waitForTimeout(1500 + files.length * 3000); // 장수만큼 업로드 대기
-          const imgCnt = await page.locator(".se-component.se-image, .se-image").count().catch(() => 0);
-          onLog(`[cafe] ✅ 이미지 업로드 완료(에디터 이미지 ${imgCnt}개 감지)`);
-        } else {
-          onLog(`[cafe] ⚠️ file input 못 찾음 — 이미지 없이 진행(clicked=${clicked})`);
-        }
-      } catch (e) { onLog(`[cafe] 이미지 업로드 실패: ${(e instanceof Error ? e.message : e)} — 글은 계속`); }
+      }
+      if (!uploaded) { onLog(`[cafe] ⚠️ 이미지 업로드 방법 못 찾음 — 이미지 없이 진행`); return; }
+      await page.waitForTimeout(2000 + files.length * 3500); // 장수만큼 업로드 대기
+      const imgCnt = await page.locator(".se-component.se-image, .se-image").count().catch(() => 0);
+      onLog(`[cafe] ✅ 이미지 업로드 완료(에디터 이미지 ${imgCnt}개 감지)`);
     };
 
     // ① 인사말+본문 입력
