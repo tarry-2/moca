@@ -50,7 +50,7 @@ export async function generateText(prompt: string, onLog?: (m: string) => void):
 //  ★이미지는 body(본문) 안에서 끝나야 함 → FAQ는 body와 분리해 이미지 뒤(질문 아래)로 안 내려가게.
 // lengthChars: 본문 목표 글자수(대략, FAQ 제외). 기본 1000.
 const YEAR = new Date().getFullYear();
-export interface CafePost { title: string; body: string; faq: string; hashtags: string; content: string }
+export interface CafePost { title: string; body: string; faq: string; hashtags: string; imagePrompts: string[]; content: string }
 
 export async function generateCafePost(keyword: string, cafeName: string, boardName: string, lengthChars = 1000, onLog?: (m: string) => void): Promise<CafePost> {
   const lo = Math.max(200, Math.round(lengthChars * 0.8));
@@ -68,11 +68,12 @@ export async function generateCafePost(keyword: string, cafeName: string, boardN
 7) FAQ(faq): 본문과 별개로, "자주 묻는 질문" Q&A 4개. Q는 사람들이 실제 검색할 질문, A는 핵심부터 1~2문장.
    형식: "자주 묻는 질문\nQ1. ...\nA1. ...\nQ2. ...\nA2. ...\nQ3. ...\nA3. ...\nQ4. ...\nA4. ..."
 8) hashtags: 핵심 키워드 "${keyword}" 포함, 관련 검색어 기반 해시태그 5~8개. 형식: "#키워드1 #키워드2 #키워드3 ..."
+9) imagePrompts: 이 글에 어울리는 이미지 생성용 프롬프트 5개. ★반드시 영어로만(한글 절대 금지 — 이미지 AI가 한글을 못 받고 깨짐). 사람·글자 없이 사물/음식/풍경 위주. 각 프롬프트 끝에 "no text, no letters, no people" 포함. 예: "fresh fish neatly arranged on ice, bright natural lighting, food photography, no text, no letters, no people"
 
 ★★본문·FAQ에 마크다운 기호 절대 쓰지 말 것: ## 제목, **굵게**, * 목록 금지. 소제목은 그냥 텍스트로(이모지 붙여도 됨), 문단은 빈 줄로 구분.
 
 반드시 아래 JSON 형식으로만 답해(다른 말·마크다운 금지):
-{"title":"제목(키워드 포함)","body":"본문(키워드 5~6회, 마크다운 기호 없이, 질문 없이 마무리)","faq":"자주 묻는 질문\\nQ1. ...\\nA1. ...","hashtags":"#${keyword.replace(/\s/g, "")} #관련어1 #관련어2"}`;
+{"title":"제목(키워드 포함)","body":"본문(키워드 5~6회, 마크다운 기호 없이, 질문 없이 마무리)","faq":"자주 묻는 질문\\nQ1. ...\\nA1. ...","hashtags":"#${keyword.replace(/\s/g, "")} #관련어1 #관련어2","imagePrompts":["english image prompt 1, no text, no people","english image prompt 2, no text, no people"]}`;
   let raw = await generateText(prompt, onLog);
   raw = raw.replace(/```json/gi, "").replace(/```/g, "").trim(); // 코드펜스 제거(파싱 실패 방지)
   try {
@@ -84,11 +85,15 @@ export async function generateCafePost(keyword: string, cafeName: string, boardN
         const body = String(j.body).trim();
         const faq = String(j.faq || "").trim();
         const hashtags = String(j.hashtags || "").trim();
+        // 이미지 프롬프트(영어) — Flow는 한글 못 받아 깨짐. 영어만 통과.
+        const imagePrompts = Array.isArray(j.imagePrompts)
+          ? j.imagePrompts.map((s: any) => String(s)).filter((s: string) => s.trim() && !/[가-힣]/.test(s))
+          : [];
         // 키워드 반복 횟수 검증 로그(제목+본문)
         const kwCount = (title + body).split(keyword).length - 1;
-        onLog?.(`키워드 "${keyword}" ${kwCount}회 포함 (목표 5~6회)`);
+        onLog?.(`키워드 "${keyword}" ${kwCount}회 포함 (목표 5~6회), 이미지 프롬프트(영문) ${imagePrompts.length}개`);
         const content = [body, faq, hashtags].filter(s => s && s.trim()).join("\n\n");
-        return { title, body, faq, hashtags, content };
+        return { title, body, faq, hashtags, imagePrompts, content };
       }
     }
   } catch { /* fallback */ }
@@ -96,5 +101,5 @@ export async function generateCafePost(keyword: string, cafeName: string, boardN
   const lines = raw.trim().split("\n").filter(Boolean);
   const title = (lines[0] || keyword).replace(/^#+\s*/, "").slice(0, 60);
   const body = lines.slice(1).join("\n") || raw;
-  return { title, body, faq: "", hashtags: "", content: body };
+  return { title, body, faq: "", hashtags: "", imagePrompts: [], content: body };
 }

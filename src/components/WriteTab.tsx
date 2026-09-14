@@ -37,6 +37,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [body, setBody] = useState("");   // 본문(이미지는 이 안에서 끝남)
   const [faq, setFaq] = useState("");     // 자주 묻는 질문(맨 마지막, 이미지 뒤로 안 내려감)
   const [hashtags, setHashtags] = useState(""); // 해시태그(맨 끝, 검색 노출용)
+  const [aiImgPrompts, setAiImgPrompts] = useState<string[]>([]); // AI가 만든 영어 이미지 프롬프트
   const [imgCount, setImgCount] = useState(2); // 플로우로 만들 이미지 장수(0=없음)
   const [lengthChars, setLengthChars] = useState(1000); // AI 본문 목표 글자수
   const [busy, setBusy] = useState<string | null>(null);
@@ -64,6 +65,22 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [termMin, setTermMin] = useState(30);       // 글 사이 간격(분)
   const [termRand, setTermRand] = useState(true);   // 간격 ±랜덤(사람처럼)
   const [waitInfo, setWaitInfo] = useState("");     // 대기 상태 표시
+
+  // 이미지 프롬프트 N개 만들기: AI가 만든 영어 프롬프트 우선, 모자라면 영어 기본값(한글 금지 — Flow가 깨짐)
+  function buildImgPrompts(n: number, kwArg?: string): string[] {
+    const out = [...aiImgPrompts].filter((s) => s && !/[가-힣]/.test(s));
+    const kw = (kwArg || keyword || title || "food").replace(/[^\w가-힣 ]/g, "").trim();
+    const fallback = [
+      `${kw}, bright natural lighting, clean editorial photography, no text, no letters, no people`,
+      `${kw}, cozy warm mood, close-up detail shot, no text, no letters, no people`,
+      `${kw}, fresh and vivid colors, top-down flat lay, no text, no letters, no people`,
+      `${kw}, soft daylight, lifestyle scene, no text, no letters, no people`,
+      `${kw}, minimal background, product photography, no text, no letters, no people`,
+    ];
+    let i = 0;
+    while (out.length < n) out.push(fallback[i++ % fallback.length]);
+    return out.slice(0, n);
+  }
 
   const accId = [...selected][0];
   const cafeName = cafes.find((c) => c.cafeId === cafeId)?.name || "";
@@ -131,6 +148,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       setBody(r.body);
       setFaq(r.faq);
       setHashtags(r.hashtags);
+      setAiImgPrompts(r.imagePrompts || []);
       log.push(`제목: ${r.title}`, "success");
       log.push(`본문 ${r.body.length}자 + FAQ ${r.faq ? "포함" : "없음"} + 해시태그 ${r.hashtags ? "포함" : "없음"}`, "info");
     } catch (e: any) {
@@ -158,9 +176,8 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       const flowAccts = await listFlowAccounts().catch(() => []);
       flowSlots = flowAccts.filter(a => a.connected).map(a => a.slot ?? 0);
       if (!flowSlots.length) log.push("⚠️ 연결된 플로우 계정이 없어 이미지 없이 글만 발행돼요(플로우 탭에서 연결하세요)", "warn", cafeName);
-      // 이미지 프롬프트 = 제목/키워드 기반 N개(살짝 변형)
-      const angles = ["밝고 자연스러운 사진", "감성적인 분위기의 사진", "깔끔한 클로즈업 사진", "생활감 있는 연출 사진", "따뜻한 색감의 사진"];
-      imgPrompts = Array.from({ length: imgCount }, (_, i) => `${keyword || title} 관련 ${angles[i % angles.length]}, 텍스트 없이`);
+      // ★이미지 프롬프트 = AI가 만든 영어 프롬프트 사용(Flow는 한글 못 받아 깨짐). 모자라면 영어 기본값.
+      imgPrompts = buildImgPrompts(imgCount);
     }
     log.push(`배치: 제목 → 썸네일 → ${useGreeting && savedGreeting ? "인사말 → " : ""}본문(글·이미지 ${imgCount}장 번갈아) → 본문 끝나면 바로 ${faq ? "❓FAQ" : "(FAQ 없음)"}`, "info", cafeName);
     if (links.length) log.push(`링크 삽입: ${links.map(l => l.name).join(", ")}`, "info", cafeName);
@@ -195,8 +212,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     if (imgCount > 0) {
       const fa = await listFlowAccounts().catch(() => []);
       flowSlots = fa.filter(a => a.connected).map(a => a.slot ?? 0);
-      const angles = ["밝고 자연스러운 사진", "감성적인 분위기의 사진", "깔끔한 클로즈업 사진", "생활감 있는 연출 사진", "따뜻한 색감의 사진"];
-      imgPrompts = Array.from({ length: imgCount }, (_, i) => `${kw} 관련 ${angles[i % angles.length]}, 텍스트 없이`);
+      imgPrompts = buildImgPrompts(imgCount);
     }
     try {
       abortRef.current = new AbortController();
