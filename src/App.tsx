@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import LogConsole from "./components/LogConsole";
 import AccountsTab from "./components/AccountsTab";
+import WriteTab from "./components/WriteTab";
 import { useLog } from "./lib/useLog";
 
 // 임시 관리자 게이트. TODO(STEP1): Supabase moca_admins 테이블 인증으로 교체.
@@ -145,18 +146,6 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
       return n;
     });
 
-  function demoLog() {
-    const acc = "chn25724";
-    log.push("━━━━━ 데모 발행 시작 ━━━━━", "sys", acc);
-    log.push("네이버 로그인 세션 복원 중…", "progress", acc);
-    setTimeout(() => log.push("로그인 성공", "success", acc), 400);
-    setTimeout(() => log.push("카페 '○○맘카페' 자유게시판으로 이동", "info", "○○맘카페"), 800);
-    setTimeout(() => log.push("AI 제목 생성 완료 (gemini-2.5-flash, 1.2s)", "info"), 1200);
-    setTimeout(() => log.push("AI 본문 생성 완료 (1,842자)", "info"), 1600);
-    setTimeout(() => log.push("⚠️ 이미지 크레딧 소진 → 다음 계정(slot 1)으로 전환", "warn"), 2000);
-    setTimeout(() => log.push("발행 실패: 등업 필요(이 카페는 '정회원'부터 글쓰기)", "error", "○○맘카페"), 2400);
-  }
-
   return (
     <div style={{ height: "100vh", background: "var(--m-bg)", color: "var(--m-text)", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", display: "flex", flexDirection: "column" }}>
       <style>{`
@@ -202,19 +191,10 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
           </h2>
           {tab === "accounts" ? (
             <AccountsTab selected={selectedAccs} onToggle={toggleAcc} log={log} />
+          ) : tab === "write" ? (
+            <WriteTab selected={selectedAccs} log={log} />
           ) : (
-            <>
-              <p style={{ color: "var(--m-sub)", fontSize: 13, lineHeight: 1.6, marginBottom: 18 }}>
-                {tab === "write"
-                  ? `카페·게시판을 고르고 AI가 글을 써서 자동 발행해요. 진행은 오른쪽 로그에 세세히 떠요.${selectedAccs.size ? ` (선택된 계정 ${selectedAccs.size}개)` : " ← 먼저 '카페 계정' 탭에서 계정을 선택하세요."}`
-                  : "이 기능은 준비 중이에요 (STEP 로드맵 순서대로 구현)."}
-              </p>
-              {tab === "write" && (
-                <button className="moca-primary" onClick={demoLog} style={{ background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 10, padding: "13px 20px", fontSize: 15, fontWeight: 800, cursor: "pointer" }}>
-                  ▶ 로그 데모 실행 (동작 확인용)
-                </button>
-              )}
-            </>
+            <p style={{ color: "var(--m-sub)", fontSize: 13, lineHeight: 1.6 }}>이 기능은 준비 중이에요 (STEP 로드맵 순서대로 구현).</p>
           )}
         </div>
 
