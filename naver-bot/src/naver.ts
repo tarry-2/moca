@@ -639,6 +639,7 @@ export interface PublishCafeParams {
   body: string;       // 본문(이미지는 이 본문 안에서 끝남)
   links?: { name: string; url: string }[]; // 온파트너/내 링크(본문에 삽입)
   faq?: string;       // 자주 묻는 질문(질문형식) — 이미지 뒤·맨 마지막
+  hashtags?: string;  // 해시태그 — 맨 끝(검색 노출)
   imgCount?: number;  // 플로우로 만들 이미지 장수(본문 끝에 삽입)
   imgPrompts?: string[]; // 이미지 생성 프롬프트(imgCount개)
   flowSlots?: number[];  // 사용할 플로우 계정 slot 목록(순서대로, 크레딧 소진 시 다음)
@@ -649,10 +650,10 @@ export interface PublishCafeParams {
 }
 
 export async function publishCafe(params: PublishCafeParams): Promise<{ url: string }> {
-  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], faq = "", imgCount = 0, imgPrompts = [], flowSlots = [], draftOnly = false, showWindow = false, onShot, onLog = console.log } = params;
-  // 최종 본문 조립: 인사말 → 본문 → 링크 → (이미지 N장 삽입) → FAQ(질문형식). 지금은 텍스트 기준 로그만.
+  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], faq = "", hashtags = "", imgCount = 0, imgPrompts = [], flowSlots = [], draftOnly = false, showWindow = false, onShot, onLog = console.log } = params;
+  // 최종 본문 조립: 인사말 → 본문 → 링크 → (이미지 N장 삽입) → FAQ(질문형식) → 해시태그(맨끝).
   const linkText = links.length ? "\n\n" + links.map(l => `▶ ${l.name}: ${l.url}`).join("\n") : "";
-  const content = [greeting, body, linkText, faq].filter(s => s && s.trim()).join("\n\n");
+  const content = [greeting, body, linkText, faq, hashtags].filter(s => s && s.trim()).join("\n\n");
 
   // ── 🌈 플로우 이미지 생성 (발행 흐름 안에서) ──
   //    연결된 플로우 계정 slot을 순서대로 시도 → 크레딧 소진(FLOW_NO_CREDIT)이면 다음 계정 → 다 쓰면 이미지 없이 진행.
@@ -770,8 +771,8 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     onLog(`[cafe] ✅ 제목 입력: ${title}`);
     await shot("제목 입력");
 
-    // 2) 본문 = 인사말 + 본문 + 링크 + FAQ (문단별 입력, 스마트에디터는 fill 안 먹음)
-    const bodyText = [greeting, body, linkText.trim(), faq].filter(s => s && s.trim()).join("\n\n");
+    // 2) 본문 = 인사말 + 본문 + 링크 + FAQ + 해시태그 (문단별 입력, 스마트에디터는 fill 안 먹음)
+    const bodyText = [greeting, body, linkText.trim(), faq, hashtags].filter(s => s && s.trim()).join("\n\n");
     // ★카페 스마트에디터ONE: 본문은 클릭해야 편집영역(contenteditable)이 활성화됨.
     //   그래서 먼저 .se-content 틀(또는 본문 문단)을 force 클릭 → 커서 들어감 → keyboard.type.
     const bodyFrameSelectors = [

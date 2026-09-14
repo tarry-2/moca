@@ -50,7 +50,7 @@ export async function generateText(prompt: string, onLog?: (m: string) => void):
 //  ★이미지는 body(본문) 안에서 끝나야 함 → FAQ는 body와 분리해 이미지 뒤(질문 아래)로 안 내려가게.
 // lengthChars: 본문 목표 글자수(대략, FAQ 제외). 기본 1000.
 const YEAR = new Date().getFullYear();
-export interface CafePost { title: string; body: string; faq: string; content: string }
+export interface CafePost { title: string; body: string; faq: string; hashtags: string; content: string }
 
 export async function generateCafePost(keyword: string, cafeName: string, boardName: string, lengthChars = 1000, onLog?: (m: string) => void): Promise<CafePost> {
   const lo = Math.max(200, Math.round(lengthChars * 0.8));
@@ -59,16 +59,18 @@ export async function generateCafePost(keyword: string, cafeName: string, boardN
 주제(키워드): "${keyword}"
 
 [글 작성 규칙 — 네이버 검색·AI 노출(AEO)에 유리하게, 반드시 지킬 것]
-1) 제목: 사람들이 검색창에 실제로 칠 형태(무엇/어떻게/추천/방법/후기). 낚시 감탄사 금지. 년도 넣으면 올해 ${YEAR}년만.
-2) 본문(body) 맨 처음: 인사말·서론 없이 "핵심 요약" 2~3문장부터(질문의 답을 먼저).
-3) 본문 중간(30~70% 지점)에 번호 목록(① ② ③ 최소 3개) 또는 "항목: 값"(예: 가격: 1만원) 실용정보 블록을 최소 1개.
-4) 각 소제목 아래 첫 문장은 결론부터(두괄식). 광고 티 없이 실제 경험담 톤(반말 아님).
-5) 본문(body)은 목표 약 ${lengthChars}자(${lo}~${hi}자 범위 준수, ${hi}자를 크게 넘기지 말 것). 단, 글자수 맞추려고 문장을 중간에 끊지 말고 반드시 자연스럽게 완결할 것. 문단은 빈 줄로 구분, 이모지 적당히. ★본문은 여기서 완결(질문 없이 마무리 인사로 끝).
-6) FAQ(faq): 본문과 별개로, "자주 묻는 질문" Q&A 4개. Q는 사람들이 실제 검색할 질문, A는 핵심부터 1~2문장.
+1) 제목: 사람들이 검색창에 실제로 칠 형태(무엇/어떻게/추천/방법/후기). 낚시 감탄사 금지. 년도 넣으면 올해 ${YEAR}년만. ★제목에 핵심 키워드 "${keyword}"를 반드시 포함.
+2) ★★네이버 검색 상위노출 핵심: 핵심 키워드 "${keyword}"를 제목에 1회 + 본문에 자연스럽게 **정확히 5~6회** 반복(억지스럽지 않게 문맥에 녹여서). 너무 많거나 적으면 안 됨.
+3) 본문(body) 맨 처음: 인사말·서론 없이 "핵심 요약" 2~3문장부터(질문의 답을 먼저).
+4) 본문 중간(30~70% 지점)에 번호 목록(① ② ③ 최소 3개) 또는 "항목: 값"(예: 가격: 1만원) 실용정보 블록을 최소 1개.
+5) 각 소제목 아래 첫 문장은 결론부터(두괄식). 광고 티 없이 실제 경험담 톤(반말 아님).
+6) 본문(body)은 목표 약 ${lengthChars}자(${lo}~${hi}자 범위 준수, ${hi}자를 크게 넘기지 말 것). 단, 글자수 맞추려고 문장을 중간에 끊지 말고 반드시 자연스럽게 완결할 것. 문단은 빈 줄로 구분, 이모지 적당히. ★본문은 여기서 완결(질문 없이 마무리 인사로 끝).
+7) FAQ(faq): 본문과 별개로, "자주 묻는 질문" Q&A 4개. Q는 사람들이 실제 검색할 질문, A는 핵심부터 1~2문장.
    형식: "자주 묻는 질문\nQ1. ...\nA1. ...\nQ2. ...\nA2. ...\nQ3. ...\nA3. ...\nQ4. ...\nA4. ..."
+8) hashtags: 핵심 키워드 "${keyword}" 포함, 관련 검색어 기반 해시태그 5~8개. 형식: "#키워드1 #키워드2 #키워드3 ..."
 
 반드시 아래 JSON 형식으로만 답해(다른 말·마크다운 금지):
-{"title":"제목","body":"본문(질문 없이 마무리)","faq":"자주 묻는 질문\\nQ1. ...\\nA1. ..."}`;
+{"title":"제목(키워드 포함)","body":"본문(키워드 5~6회, 질문 없이 마무리)","faq":"자주 묻는 질문\\nQ1. ...\\nA1. ...","hashtags":"#${keyword.replace(/\s/g, "")} #관련어1 #관련어2"}`;
   let raw = await generateText(prompt, onLog);
   raw = raw.replace(/```json/gi, "").replace(/```/g, "").trim(); // 코드펜스 제거(파싱 실패 방지)
   try {
@@ -79,7 +81,12 @@ export async function generateCafePost(keyword: string, cafeName: string, boardN
         const title = String(j.title);
         const body = String(j.body).trim();
         const faq = String(j.faq || "").trim();
-        return { title, body, faq, content: faq ? `${body}\n\n${faq}` : body };
+        const hashtags = String(j.hashtags || "").trim();
+        // 키워드 반복 횟수 검증 로그(제목+본문)
+        const kwCount = (title + body).split(keyword).length - 1;
+        onLog?.(`키워드 "${keyword}" ${kwCount}회 포함 (목표 5~6회)`);
+        const content = [body, faq, hashtags].filter(s => s && s.trim()).join("\n\n");
+        return { title, body, faq, hashtags, content };
       }
     }
   } catch { /* fallback */ }
@@ -87,5 +94,5 @@ export async function generateCafePost(keyword: string, cafeName: string, boardN
   const lines = raw.trim().split("\n").filter(Boolean);
   const title = (lines[0] || keyword).replace(/^#+\s*/, "").slice(0, 60);
   const body = lines.slice(1).join("\n") || raw;
-  return { title, body, faq: "", content: body };
+  return { title, body, faq: "", hashtags: "", content: body };
 }

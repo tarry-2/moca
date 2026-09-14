@@ -36,6 +36,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");   // 본문(이미지는 이 안에서 끝남)
   const [faq, setFaq] = useState("");     // 자주 묻는 질문(맨 마지막, 이미지 뒤로 안 내려감)
+  const [hashtags, setHashtags] = useState(""); // 해시태그(맨 끝, 검색 노출용)
   const [imgCount, setImgCount] = useState(2); // 플로우로 만들 이미지 장수(0=없음)
   const [lengthChars, setLengthChars] = useState(1000); // AI 본문 목표 글자수
   const [busy, setBusy] = useState<string | null>(null);
@@ -129,8 +130,9 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       setTitle(r.title);
       setBody(r.body);
       setFaq(r.faq);
+      setHashtags(r.hashtags);
       log.push(`제목: ${r.title}`, "success");
-      log.push(`본문 ${r.body.length}자 + FAQ ${r.faq ? "포함(맨 끝)" : "없음"}`, "info");
+      log.push(`본문 ${r.body.length}자 + FAQ ${r.faq ? "포함" : "없음"} + 해시태그 ${r.hashtags ? "포함" : "없음"}`, "info");
     } catch (e: any) {
       log.push(`AI 생성 실패: ${e?.message || e}`, "error");
     } finally { setBusy(null); }
@@ -168,7 +170,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         // greeting=인사말(맨 위), body=본문(글·이미지 번갈아), links=온파트너/내링크, faq=질문형식(맨 아래).
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, faq, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, faq, hashtags, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
       });
       const d = await res.json();
       // 봇 진단 로그를 화면 로그로
@@ -183,7 +185,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   }
 
   // 발행 1건 요청(순차 발행에서 재사용). 성공 여부 반환.
-  async function sendOnePublish(kw: string, post: { title: string; body: string; faq: string }): Promise<boolean> {
+  async function sendOnePublish(kw: string, post: { title: string; body: string; faq: string; hashtags: string }): Promise<boolean> {
     const links = [
       ...(useLink && linkUrl.trim() ? [{ name: linkName.trim() || linkUrl.trim(), url: linkUrl.trim() }] : []),
       { name: ONPARTNER.name, url: ONPARTNER.url },
@@ -201,7 +203,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         signal: abortRef.current.signal,
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title: post.title, greeting: useGreeting ? savedGreeting : "", body: post.body, links, faq: post.faq, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title: post.title, greeting: useGreeting ? savedGreeting : "", body: post.body, links, faq: post.faq, hashtags: post.hashtags, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
       });
       const d = await res.json();
       (d.logs || []).forEach((m: string) => log.push(m, m.includes("⚠️") ? "warn" : (m.includes("실패") || m.includes("오류")) ? "error" : "info", cafeName));
@@ -373,6 +375,8 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
         <textarea className="moca-in" style={{ ...inputStyle, minHeight: 200, resize: "vertical", lineHeight: 1.6 }} value={body} onChange={(e) => setBody(e.target.value)} placeholder="본문 (AI 생성 후 편집 가능)" />
         <label style={{ ...labelStyle, marginTop: 10 }}>❓ 자주 묻는 질문(FAQ) <span style={{ color: "var(--m-dim)" }}>· 검색노출용, 맨 마지막(이미지 아래)에 들어가요</span></label>
         <textarea className="moca-in" style={{ ...inputStyle, minHeight: 130, resize: "vertical", lineHeight: 1.6 }} value={faq} onChange={(e) => setFaq(e.target.value)} placeholder="자주 묻는 질문 Q&A (AI가 자동 생성, 편집 가능)" />
+        <label style={{ ...labelStyle, marginTop: 10 }}>#️⃣ 해시태그 <span style={{ color: "var(--m-dim)" }}>· 글 맨 끝, 네이버 검색 노출용(키워드 5~6회는 본문에 자동 반영)</span></label>
+        <input className="moca-in" style={{ ...inputStyle }} value={hashtags} onChange={(e) => setHashtags(e.target.value)} placeholder="#키워드 #관련어1 #관련어2 (AI 자동 생성, 편집 가능)" />
       </div>
 
       {/* 💬 글쓴이 인사말 (저장) */}
