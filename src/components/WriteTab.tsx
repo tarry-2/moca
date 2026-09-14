@@ -33,6 +33,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [imgCount, setImgCount] = useState(2); // 플로우로 만들 이미지 장수(0=없음)
+  const [lengthChars, setLengthChars] = useState(1000); // AI 본문 목표 글자수
   const [busy, setBusy] = useState<string | null>(null);
 
   const accId = [...selected][0];
@@ -82,7 +83,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     setBusy("ai");
     log.push(`━━ AI 글 생성: "${keyword}" ━━`, "sys");
     try {
-      const r = await generateCafePost(keyword, cafeName || "카페", boardName || "게시판", (m) => log.push(m, "progress"));
+      const r = await generateCafePost(keyword, cafeName || "카페", boardName || "게시판", lengthChars, (m) => log.push(m, "progress"));
       setTitle(r.title);
       setContent(r.content);
       log.push(`제목: ${r.title}`, "success");
@@ -180,6 +181,29 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       {/* ③ 키워드 + AI */}
       <div style={card}>
         <label style={stepLabel}>③ 키워드 → AI 글 생성</label>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+          <span style={{ color: "var(--m-sub)", fontSize: 13 }}>글 길이:</span>
+          {[
+            { v: 500, l: "짧게", d: "약 500자" },
+            { v: 1000, l: "보통", d: "약 1000자" },
+            { v: 1800, l: "길게", d: "약 1800자" },
+            { v: 2600, l: "아주 길게", d: "약 2600자" },
+          ].map((o) => (
+            <button
+              key={o.v}
+              className="moca-w-btn"
+              onClick={() => setLengthChars(o.v)}
+              title={o.d}
+              style={{
+                padding: "7px 13px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                background: lengthChars === o.v ? "var(--m-gold)" : "var(--m-tabhover)",
+                color: lengthChars === o.v ? "var(--m-goldink)" : "var(--m-text)",
+                border: "1px solid var(--m-line2)",
+              }}
+            >{o.l}</button>
+          ))}
+          <span style={{ color: "var(--m-dim)", fontSize: 12 }}>목표 약 {lengthChars}자</span>
+        </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
           <input className="moca-in" style={{ ...inputStyle, flex: 1 }} value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="예: 초보 캠핑 준비물 추천" onKeyDown={(e) => e.key === "Enter" && genAI()} />
           <button className="moca-w-btn" disabled={busy === "ai"} onClick={genAI} style={{ background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 8, padding: "0 20px", fontSize: 14, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>{busy === "ai" ? "생성 중…" : "✨ AI 글 생성"}</button>

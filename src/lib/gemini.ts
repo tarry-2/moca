@@ -46,14 +46,17 @@ export async function generateText(prompt: string, onLog?: (m: string) => void):
 }
 
 // 카페 글: 제목 + 본문을 한 번에 생성(JSON). 실패 시 통짜 텍스트 fallback.
-export async function generateCafePost(keyword: string, cafeName: string, boardName: string, onLog?: (m: string) => void): Promise<{ title: string; content: string }> {
+// lengthChars: 본문 목표 글자수(대략). 기본 1000.
+export async function generateCafePost(keyword: string, cafeName: string, boardName: string, lengthChars = 1000, onLog?: (m: string) => void): Promise<{ title: string; content: string }> {
+  const lo = Math.max(200, Math.round(lengthChars * 0.8));
+  const hi = Math.round(lengthChars * 1.2);
   const prompt = `너는 네이버 카페 '${cafeName}'의 '${boardName}' 게시판에 자연스럽게 글을 쓰는 실제 회원이야.
 주제(키워드): "${keyword}"
 
 조건:
 - 광고/홍보 티가 나지 않게, 실제 경험담처럼 자연스럽고 친근한 말투(반말 아님, 카페 회원 톤)
 - 제목은 클릭하고 싶게, 낚시 아닌 진짜 정보형
-- 본문은 800~1500자, 문단 구분(빈 줄), 이모지 적당히
+- 본문은 ${lo}~${hi}자(목표 약 ${lengthChars}자), 문단 구분(빈 줄), 이모지 적당히
 - 카페 규정을 존중하는 건전한 내용
 
 반드시 아래 JSON 형식으로만 답해(다른 말 금지):
