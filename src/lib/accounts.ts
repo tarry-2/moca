@@ -56,3 +56,8 @@ export async function deleteAccount(id: string): Promise<void> {
   const { error } = await supabase.from("moca_accounts").delete().eq("id", id);
   if (error) throw error;
 }
+
+export async function setSessionSaved(id: string, saved: boolean): Promise<void> {
+  const { error } = await supabase.from("moca_accounts").update({ session_saved: saved }).eq("id", id);
+  if (error) throw error;
+}

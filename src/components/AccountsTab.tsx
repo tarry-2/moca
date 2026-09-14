@@ -1,7 +1,8 @@
 // 👤 카페 계정 관리 — 네이버 계정 추가/저장/삭제/선택 (Supabase moca_accounts 영속)
 // 선택한 계정들로 글쓰기·발행·활동·유입을 순차 실행한다(다중 선택).
 import { useEffect, useState } from "react";
-import { CafeAccount, AccountInput, listAccounts, addAccount, updateAccount, deleteAccount } from "../lib/accounts";
+import { CafeAccount, AccountInput, listAccounts, addAccount, updateAccount, deleteAccount, setSessionSaved } from "../lib/accounts";
+import { botFetch, BOT_BASE } from "../lib/botApi";
 import type { UseLog } from "../lib/useLog";
 
 const inputStyle: React.CSSProperties = {
@@ -72,6 +73,31 @@ export default function AccountsTab({ selected, onToggle, log }: Props) {
     finally { setBusy(false); }
   }
 
+  // 🔑 봇으로 네이버 로그인 → 세션 저장 (save-session 재사용). 데스크톱 앱에서만 봇이 떠 동작.
+  async function login(a: CafeAccount) {
+    if (!a.naver_pw) { setErr(`${a.naver_id}: 비밀번호가 없어요. ✏️수정에서 입력해 주세요.`); return; }
+    setBusy(true);
+    log.push(`━━━━━ 로그인 시작: ${a.naver_id} ━━━━━`, "sys", a.naver_id);
+    log.push("봇이 크롬을 띄워 네이버 로그인 중…", "progress", a.naver_id);
+    try {
+      const res = await botFetch(`${BOT_BASE}/api/naver/save-session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: a.id, id: a.naver_id, pw: a.naver_pw }),
+      });
+      const d = await res.json();
+      if (d.success) {
+        log.push("로그인 성공 · 세션 저장 완료", "success", a.naver_id);
+        await setSessionSaved(a.id, true);
+        await reload();
+      } else {
+        log.push(`로그인 실패: ${d.error || "알 수 없음"}`, "error", a.naver_id);
+      }
+    } catch (e: any) {
+      log.push(`봇 연결 실패: ${e?.message || e} — 데스크톱 앱에서 실행해야 봇이 떠요(웹 미리보기엔 봇 없음)`, "error", a.naver_id);
+    } finally { setBusy(false); }
+  }
+
   const card: React.CSSProperties = { background: "var(--m-panel)", border: "1px solid var(--m-line)", borderRadius: 12, padding: 16, marginBottom: 16 };
 
   return (
@@ -140,6 +166,9 @@ export default function AccountsTab({ selected, onToggle, log }: Props) {
                     </div>
                     <div style={{ color: "var(--m-dim)", fontSize: 11.5, marginTop: 2 }}>
                       {a.proxy_sessid ? "🔒 고정IP" : "🌐 IP 미지정"}
+                      <span style={{ color: a.session_saved ? "var(--m-log-success)" : "var(--m-log-warn)" }}>
+                        {a.session_saved ? " · ✅ 세션 있음" : " · ⚠️ 로그인 필요"}
+                      </span>
                       {a.memo ? " · " + a.memo : ""}
                     </div>
                   </div>
@@ -150,6 +179,7 @@ export default function AccountsTab({ selected, onToggle, log }: Props) {
                     </span>
                   ) : (
                     <span style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                      <button className="moca-acc-btn" disabled={busy} onClick={() => login(a)} title="봇으로 네이버 로그인 후 세션 저장(데스크톱 앱에서 동작)" style={{ background: a.session_saved ? "var(--m-tabhover)" : "var(--m-gold)", color: a.session_saved ? "var(--m-text)" : "var(--m-goldink)", border: "1px solid var(--m-line2)", borderRadius: 7, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{a.session_saved ? "🔑 재로그인" : "🔑 로그인"}</button>
                       <button className="moca-acc-btn" onClick={() => startEdit(a)} title="수정" style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 7, padding: "6px 9px", fontSize: 12, cursor: "pointer" }}>✏️</button>
                       <button className="moca-acc-btn" onClick={() => setConfirmDel(a.id)} title="삭제" style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 7, padding: "6px 9px", fontSize: 12, cursor: "pointer" }}>🗑️</button>
                     </span>

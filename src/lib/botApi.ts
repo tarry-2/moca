@@ -1,3 +1,6 @@
+// 모카 전용 봇 포트(3383). electron이 스폰한 naver-bot 로컬 서버.
+export const BOT_BASE = "http://127.0.0.1:3383";
+
 let tokenPromise: Promise<string> | null = null;
 
 async function getBotToken(): Promise<string> {
