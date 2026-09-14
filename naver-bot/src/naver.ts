@@ -784,8 +784,24 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
       .trim();
     // FAQ: Q앞에 빈 줄(질문 단락 구분), A는 Q 바로 아래
     const faqSpaced = faq ? cleanMd(faq).replace(/\n+(Q\s*\d)/g, "\n\n$1").replace(/\n+(A\s*\d)/g, "\n$1") : "";
-    // ★링크(URL)는 본문에 섞지 않고 맨 끝에 따로 입력(URL 자동 배너 임베드가 뒤 텍스트를 갈라놓는 문제 방지)
-    const bodyText = [greeting, cleanMd(body), faqSpaced, hashtags].filter(s => s && s.trim()).join("\n\n");
+    // ★배치: 인사말+본문 → 이미지 → FAQ+해시태그 → 링크(맨끝). 그래서 본문/꼬리 파트를 나눠 입력.
+    const mainText = [greeting, cleanMd(body)].filter(s => s && s.trim()).join("\n\n");
+    const tailText = [faqSpaced, hashtags].filter(s => s && s.trim()).join("\n\n");
+    const bodyText = [mainText, tailText].filter(Boolean).join("\n\n"); // 검증용 합본
+
+    // 🖼️ 플로우 이미지(base64) → 임시 파일로 저장(카페 사진 업로드용)
+    const imgFiles: string[] = [];
+    for (const im of flowImages) {
+      const m = (im.src || "").match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
+      if (m) {
+        const ext = m[1].split("/")[1].replace("jpeg", "jpg");
+        const fp = path.join(os.tmpdir(), `moca_img_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`);
+        try { fs.writeFileSync(fp, Buffer.from(m[2], "base64")); imgFiles.push(fp); } catch {}
+      } else if (im.src && (im.src.startsWith("/") || im.src.startsWith("file:"))) {
+        imgFiles.push(im.src.replace("file://", ""));
+      }
+    }
+    if (flowImages.length) onLog(`[cafe] 🖼️ 이미지 ${imgFiles.length}장 파일 준비 완료(업로드 예정)`);
     // ★카페 스마트에디터ONE: 본문은 클릭해야 편집영역(contenteditable)이 활성화됨.
     //   그래서 먼저 .se-content 틀(또는 본문 문단)을 force 클릭 → 커서 들어감 → keyboard.type.
     const bodyFrameSelectors = [
@@ -810,20 +826,57 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     const editableCount = await page.locator("[contenteditable='true']").count().catch(() => 0);
     onLog(`[cafe] 편집영역 활성화 확인: contenteditable ${editableCount}개`);
 
-    const lines = bodyText.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i]) await page.keyboard.type(lines[i], { delay: 5 });
-      if (i < lines.length - 1) await page.keyboard.press("Enter");
-    }
+    // 문단별 타이핑 헬퍼
+    const typeText = async (text: string) => {
+      const lines = text.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i]) await page.keyboard.type(lines[i], { delay: 5 });
+        if (i < lines.length - 1) await page.keyboard.press("Enter");
+      }
+    };
+    // 🖼️ 카페 사진 업로드 헬퍼 — 사진 버튼 클릭 → input[type=file]에 setInputFiles
+    const uploadImages = async (files: string[]) => {
+      if (!files.length) return;
+      onLog(`[cafe] 🖼️ 이미지 ${files.length}장 업로드 시작…`);
+      try {
+        // 툴바 '사진' 버튼 클릭(여러 후보)
+        const photoSelectors = ["button:has-text('사진')", "[data-name='image']", "button[data-log*='image']", ".se-toolbar-item-image button", "[class*='image'] button"];
+        let clicked = false;
+        for (const sel of photoSelectors) {
+          const b = page.locator(sel).first();
+          if (await b.count().catch(() => 0)) { try { await b.click({ timeout: 3000 }); clicked = true; onLog(`[cafe] 사진 버튼 클릭: ${sel}`); break; } catch {} }
+        }
+        await page.waitForTimeout(1000);
+        // file input 찾아 파일 주입(사진 버튼 없이도 숨은 input 있을 수 있음)
+        const fi = page.locator("input[type='file']").first();
+        if (await fi.count().catch(() => 0)) {
+          await fi.setInputFiles(files);
+          onLog(`[cafe] 파일 ${files.length}장 주입 → 업로드 대기…`);
+          await page.waitForTimeout(1500 + files.length * 3000); // 장수만큼 업로드 대기
+          const imgCnt = await page.locator(".se-component.se-image, .se-image").count().catch(() => 0);
+          onLog(`[cafe] ✅ 이미지 업로드 완료(에디터 이미지 ${imgCnt}개 감지)`);
+        } else {
+          onLog(`[cafe] ⚠️ file input 못 찾음 — 이미지 없이 진행(clicked=${clicked})`);
+        }
+      } catch (e) { onLog(`[cafe] 이미지 업로드 실패: ${(e instanceof Error ? e.message : e)} — 글은 계속`); }
+    };
+
+    // ① 인사말+본문 입력
+    await typeText(mainText);
+    await page.waitForTimeout(400);
+    // ② 이미지 업로드(본문 끝)
+    if (imgFiles.length) { await page.keyboard.press("Enter").catch(() => {}); await uploadImages(imgFiles); }
+    // ③ FAQ+해시태그 입력(이미지 아래)
+    if (tailText) { await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); await typeText(tailText); }
+
     await page.waitForTimeout(500);
-    // ✅ 실제로 본문이 들어갔는지 검증(스마트에디터 본문 텍스트 길이 확인)
     const typedLen = await page.evaluate(() => {
       const se = document.querySelector(".se-content, .se-main-container");
       return se ? (se.textContent || "").replace(/\s/g, "").length : 0;
     }).catch(() => 0);
     onLog(`[cafe] 본문 입력 검증: 에디터에 실제 ${typedLen}자 감지 (요청 ${bodyText.replace(/\s/g, "").length}자)`);
-    if (typedLen < 20) throw new Error(`본문이 에디터에 안 들어갔어요(감지 ${typedLen}자). 편집영역 활성화 실패 — 창보기 ON으로 재시도 필요`);
-    onLog(`[cafe] ✅ 본문 입력 완료 (${bodyText.length}자)`);
+    if (typedLen < 20) throw new Error(`본문이 에디터에 안 들어갔어요(감지 ${typedLen}자). 편집영역 활성화 실패`);
+    onLog(`[cafe] ✅ 본문+이미지 입력 완료`);
     await shot("본문 입력 완료");
 
     // 🔗 링크는 맨 끝에 하나씩 — URL 입력 후 자동 배너 임베드 완성까지 대기(뒤 텍스트 안 낌)
@@ -835,11 +888,8 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
       await page.keyboard.type(l.url, { delay: 15 }).catch(() => {});
       await page.keyboard.press("Enter").catch(() => {});
       onLog(`[cafe] 🔗 링크 입력: ${l.name} (${l.url}) — 배너 임베드 대기…`);
-      await page.waitForTimeout(3500).catch(() => {}); // URL 자동 배너/카드 임베드 완성 대기
+      await page.waitForTimeout(3500).catch(() => {});
     }
-
-    // ⚠️ 이미지 삽입은 다음 단계(클립보드/업로드). 지금은 텍스트 발행 우선.
-    if (flowImages.length) onLog(`[cafe] ℹ️ 생성 이미지 ${flowImages.length}장은 다음 버전에서 본문에 삽입(현재는 텍스트만)`);
 
     // 3) 등록(또는 임시등록)
     await page.waitForTimeout(600);
