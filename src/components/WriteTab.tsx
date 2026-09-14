@@ -14,6 +14,7 @@ const inputStyle: React.CSSProperties = {
 };
 const card: React.CSSProperties = { background: "var(--m-panel)", border: "1px solid var(--m-line)", borderRadius: 12, padding: 16, marginBottom: 14 };
 const stepLabel: React.CSSProperties = { color: "var(--m-text)", fontSize: 14, fontWeight: 800, marginBottom: 10, display: "block" };
+const labelStyle: React.CSSProperties = { fontSize: 12, color: "var(--m-sub)", marginBottom: 4, display: "block" };
 
 interface Props {
   selected: Set<string>;
@@ -31,7 +32,8 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [menuId, setMenuId] = useState("");
   const [keyword, setKeyword] = useState("");
   const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
+  const [body, setBody] = useState("");   // 본문(이미지는 이 안에서 끝남)
+  const [faq, setFaq] = useState("");     // 자주 묻는 질문(맨 마지막, 이미지 뒤로 안 내려감)
   const [imgCount, setImgCount] = useState(2); // 플로우로 만들 이미지 장수(0=없음)
   const [lengthChars, setLengthChars] = useState(1000); // AI 본문 목표 글자수
   const [busy, setBusy] = useState<string | null>(null);
@@ -85,27 +87,30 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     try {
       const r = await generateCafePost(keyword, cafeName || "카페", boardName || "게시판", lengthChars, (m) => log.push(m, "progress"));
       setTitle(r.title);
-      setContent(r.content);
+      setBody(r.body);
+      setFaq(r.faq);
       log.push(`제목: ${r.title}`, "success");
+      log.push(`본문 ${r.body.length}자 + FAQ ${r.faq ? "포함(맨 끝)" : "없음"}`, "info");
     } catch (e: any) {
       log.push(`AI 생성 실패: ${e?.message || e}`, "error");
     } finally { setBusy(null); }
   }
 
   async function publish() {
-    if (!accId || !cafeId || !menuId || !title.trim() || !content.trim()) {
+    if (!accId || !cafeId || !menuId || !title.trim() || !body.trim()) {
       log.push("계정·카페·게시판·제목·본문을 모두 채워주세요", "warn");
       return;
     }
     setBusy("publish");
     log.push(`━━ 🚀 발행 시작: [${cafeName}] ${boardName} ━━`, "sys", cafeName);
     log.push(`제목: ${title}`, "info", cafeName);
-    log.push(`이미지: ${imgCount ? `플로우로 ${imgCount}장 생성` : "없음(글만)"}`, "info", cafeName);
+    log.push(`구성: 본문 ${body.length}자 → 이미지 ${imgCount}장(본문 끝) → ${faq ? "FAQ(질문형식) 맨 아래" : "FAQ 없음"}`, "info", cafeName);
     log.push(`창보기 ${showWindowState ? "ON(크롬 창 뜸)" : "OFF(백그라운드+캡처)"}`, "progress");
     try {
       const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, content, imgCount, showWindow: showWindowState }),
+        // body=본문(이미지 여기서 끝), faq=질문형식(이미지 뒤·맨 아래). 봇이 body→이미지→faq 순으로 조립.
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, body, faq, imgCount, showWindow: showWindowState }),
       });
       const d = await res.json();
       // 봇 진단 로그를 화면 로그로
@@ -209,7 +214,10 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
           <button className="moca-w-btn" disabled={busy === "ai"} onClick={genAI} style={{ background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 8, padding: "0 20px", fontSize: 14, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>{busy === "ai" ? "생성 중…" : "✨ AI 글 생성"}</button>
         </div>
         <input className="moca-in" style={{ ...inputStyle, marginBottom: 8, fontWeight: 700 }} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="제목 (AI 생성 후 편집 가능)" />
-        <textarea className="moca-in" style={{ ...inputStyle, minHeight: 220, resize: "vertical", lineHeight: 1.6 }} value={content} onChange={(e) => setContent(e.target.value)} placeholder="본문 (AI 생성 후 편집 가능)" />
+        <label style={{ ...labelStyle, marginTop: 4 }}>본문 <span style={{ color: "var(--m-dim)" }}>· 이미지는 이 본문 안에서 끝나요</span></label>
+        <textarea className="moca-in" style={{ ...inputStyle, minHeight: 200, resize: "vertical", lineHeight: 1.6 }} value={body} onChange={(e) => setBody(e.target.value)} placeholder="본문 (AI 생성 후 편집 가능)" />
+        <label style={{ ...labelStyle, marginTop: 10 }}>❓ 자주 묻는 질문(FAQ) <span style={{ color: "var(--m-dim)" }}>· 검색노출용, 맨 마지막(이미지 아래)에 들어가요</span></label>
+        <textarea className="moca-in" style={{ ...inputStyle, minHeight: 130, resize: "vertical", lineHeight: 1.6 }} value={faq} onChange={(e) => setFaq(e.target.value)} placeholder="자주 묻는 질문 Q&A (AI가 자동 생성, 편집 가능)" />
       </div>
 
       {/* ④ 이미지(플로우) 설정 */}

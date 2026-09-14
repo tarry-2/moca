@@ -635,14 +635,18 @@ export interface PublishCafeParams {
   cafeUrl?: string;   // 카페 주소(영문). 신형 에디터 URL에 필요할 수 있음
   menuId: string;
   title: string;
-  content: string;
+  body: string;       // 본문(이미지는 이 본문 안에서 끝남)
+  faq?: string;       // 자주 묻는 질문(질문형식) — 이미지 뒤·맨 마지막
+  imgCount?: number;  // 플로우로 만들 이미지 장수(본문 끝에 삽입)
   showWindow?: boolean;
   onShot?: (caption: string, dataUrl: string) => void;
   onLog?: (msg: string) => void;
 }
 
 export async function publishCafe(params: PublishCafeParams): Promise<{ url: string }> {
-  const { userId, cafeId, cafeUrl, menuId, title, content, showWindow = false, onShot, onLog = console.log } = params;
+  const { userId, cafeId, cafeUrl, menuId, title, body, faq = "", imgCount = 0, showWindow = false, onShot, onLog = console.log } = params;
+  // 최종 본문 조립: 본문 → (이미지 N장은 발행봇이 여기 삽입) → FAQ(질문형식). 지금은 텍스트 기준 로그만.
+  const content = faq ? `${body}\n\n${faq}` : body;
   if (!naverSessionExists(userId)) throw new Error("네이버 세션 없음(먼저 계정 로그인)");
   const session = readSession<any>(naverSessionName(userId), LEGACY_SESSION_DIRS);
   const cookies = await ensureLiveSessionNaver(userId, onLog, session);
@@ -702,7 +706,7 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
 
     // ⚠️ 여기까지가 1차(구조 파악). 실제 입력/발행은 위 진단 로그로 셀렉터 확정 후 다음 버전에서 연결.
     // 지금은 안전하게 "발행 직전"까지만 가고 실제 등록은 하지 않는다(오발행 방지).
-    onLog(`[cafe] ⚠️ 발행 직전까지 도달(진단 모드). 제목="${title}" 본문 ${content.length}자. 실제 등록은 셀렉터 확정 후 연결.`);
+    onLog(`[cafe] ⚠️ 발행 직전까지 도달(진단 모드). 제목="${title}" / 본문 ${body.length}자 / 이미지 ${imgCount}장(본문 끝) / FAQ ${faq ? "있음(맨 아래)" : "없음"} / 총 ${content.length}자. 실제 등록은 셀렉터 확정 후 연결.`);
     await shot("발행 직전(진단 모드)");
 
     await browser.close();
