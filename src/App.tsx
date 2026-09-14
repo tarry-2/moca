@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import LogConsole from "./components/LogConsole";
 import AccountsTab from "./components/AccountsTab";
 import WriteTab from "./components/WriteTab";
+import FlowTab from "./components/FlowTab";
 import PasswordInput from "./components/PasswordInput";
 import { useLog } from "./lib/useLog";
 
@@ -129,6 +130,7 @@ function AdminLogin({ onOk, theme, onToggleTheme }: { onOk: () => void; theme: T
 const TABS = [
   { k: "write", ico: "📝", label: "글쓰기·발행" },
   { k: "accounts", ico: "👤", label: "카페 계정" },
+  { k: "flow", ico: "🌈", label: "플로우 이미지" },
   { k: "manage", ico: "🛡️", label: "내 카페 관리" },
   { k: "activity", ico: "💬", label: "활동·등업" },
   { k: "promo", ico: "📢", label: "홍보" },
@@ -193,6 +195,8 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
           </h2>
           {tab === "accounts" ? (
             <AccountsTab selected={selectedAccs} onToggle={toggleAcc} log={log} />
+          ) : tab === "flow" ? (
+            <FlowTab log={log} />
           ) : tab === "write" ? (
             <WriteTab selected={selectedAccs} log={log} showWindow={showWindow} />
           ) : (
