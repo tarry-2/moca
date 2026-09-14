@@ -3048,7 +3048,7 @@ export async function generateFlowImagesCDP(params: {
     // 4-a) ★에이전트 설정 자동화(2026-09 Flow UI): "생성 전 확인 → 안 함" + "이미지 기본값 x1" 저장.
     //   이걸 해두면 크레딧 확인 팝업이 안 뜨고 봇이 이미지 토글과 씨름할 필요가 없다(원터치와 동일 상태를 봇이 자동 세팅).
     //   세션당 1회면 계정에 저장돼 계속 유지.
-    const setAgentAutoConfig = async (): Promise<void> => {
+    const setAgentAutoConfig = async (): Promise<boolean> => {
       try {
         // 설정(tune/에이전트 설정) 패널 열기
         let opened = false;
@@ -3077,12 +3077,14 @@ export async function generateFlowImagesCDP(params: {
         }).catch(() => false);
         log(`[Flow] ⚙️ 에이전트 설정 자동화: 확인안함=${done.noConfirm} x1=${done.x1} 저장=${saved}`);
         await page.waitForTimeout(800);
-      } catch (e) { log(`[Flow] 에이전트 설정 자동화 스킵: ${String((e as any)?.message || e).split("\n")[0]}`); }
+        return saved; // 저장 성공 = 이미지 기본값(x1) 설정 완료
+      } catch (e) { log(`[Flow] 에이전트 설정 자동화 스킵: ${String((e as any)?.message || e).split("\n")[0]}`); return false; }
     };
 
     const setImageMode = async (): Promise<boolean> => {
-      // 실제 Flow UI(테리 스크린샷): 요약 칩('동영상·360p·8초')→설정 팝업→맨 위 [이미지][동영상] 토글. '이미지' 클릭.
-      await setAgentAutoConfig(); // ★먼저 에이전트 설정(확인 안 함+x1) 자동 저장
+      // ★2026-09 Flow: '에이전트 설정' 패널이 이미지/동영상 기본값을 정하는 곳. 여기서 x1 저장하면 이미지 모드 완료.
+      const agentOk = await setAgentAutoConfig(); // 에이전트 설정(확인 안 함+x1) 자동 저장
+      if (agentOk) { log("[Flow] 🖼️ 에이전트 설정 저장 완료 → 이미지 모드(x1) 설정됨"); return true; } // 성공 시 옛 토글 안 찾음
       try {
         // 이미 이미지 모드면 스킵
         const already = await page.evaluate(() => {
