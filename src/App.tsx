@@ -194,7 +194,7 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
           {tab === "accounts" ? (
             <AccountsTab selected={selectedAccs} onToggle={toggleAcc} log={log} />
           ) : tab === "write" ? (
-            <WriteTab selected={selectedAccs} log={log} />
+            <WriteTab selected={selectedAccs} log={log} showWindow={showWindow} />
           ) : (
             <p style={{ color: "var(--m-sub)", fontSize: 13, lineHeight: 1.6 }}>이 기능은 준비 중이에요 (STEP 로드맵 순서대로 구현).</p>
           )}

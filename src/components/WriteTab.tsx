@@ -18,9 +18,10 @@ const stepLabel: React.CSSProperties = { color: "var(--m-text)", fontSize: 14, f
 interface Props {
   selected: Set<string>;
   log: UseLog;
+  showWindow: boolean;
 }
 
-export default function WriteTab({ selected, log }: Props) {
+export default function WriteTab({ selected, log, showWindow: showWindowState }: Props) {
   const [keyInput, setKeyInput] = useState(getGeminiKey());
   const [keySaved, setKeySaved] = useState(!!getGeminiKey());
   const [keyOpen, setKeyOpen] = useState(!getGeminiKey()); // 키 없으면 펼침, 있으면 접힘
@@ -89,13 +90,30 @@ export default function WriteTab({ selected, log }: Props) {
     } finally { setBusy(null); }
   }
 
-  function publish() {
+  async function publish() {
     if (!accId || !cafeId || !menuId || !title.trim() || !content.trim()) {
       log.push("계정·카페·게시판·제목·본문을 모두 채워주세요", "warn");
       return;
     }
-    // TODO(STEP1): publishCafe 봇 함수 연결(에디터 조작 + showWindow/onShot). 실계정 검증 필요.
-    log.push(`🚀 발행 준비: [${cafeName}] ${boardName} · "${title}" — 발행봇(publishCafe) 구현 예정`, "warn", cafeName);
+    setBusy("publish");
+    log.push(`━━ 🚀 발행 시작: [${cafeName}] ${boardName} ━━`, "sys", cafeName);
+    log.push(`제목: ${title}`, "info", cafeName);
+    log.push(`창보기 ${showWindowState ? "ON(크롬 창 뜸)" : "OFF(백그라운드+캡처)"}`, "progress");
+    try {
+      const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, content, showWindow: showWindowState }),
+      });
+      const d = await res.json();
+      // 봇 진단 로그를 화면 로그로
+      (d.logs || []).forEach((m: string) => log.push(m, m.includes("⚠️") ? "warn" : m.includes("실패") || m.includes("오류") ? "error" : "info", cafeName));
+      // 단계별 캡처
+      (d.shots || []).forEach((s: any) => log.shot(s.caption, s.dataUrl, cafeName));
+      if (d.success) log.push(`발행 결과: ${d.url}`, "success", cafeName);
+      else log.push(`발행 실패: ${d.error || "알 수 없음"}`, "error", cafeName);
+    } catch (e: any) {
+      log.push(`봇 연결 실패: ${e?.message || e} (데스크톱 앱에서 실행 필요)`, "error", cafeName);
+    } finally { setBusy(null); }
   }
 
   return (

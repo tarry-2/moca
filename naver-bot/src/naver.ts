@@ -628,6 +628,92 @@ export async function getCafeBoards(userId: string, cafeId: string): Promise<Caf
   }
 }
 
+// ☕ 카페 글 발행 — 진단로그+창보기+단계별 캡처. 첫 실행 때 에디터 구조를 로그로 파악해 교정.
+export interface PublishCafeParams {
+  userId: string;
+  cafeId: string;
+  cafeUrl?: string;   // 카페 주소(영문). 신형 에디터 URL에 필요할 수 있음
+  menuId: string;
+  title: string;
+  content: string;
+  showWindow?: boolean;
+  onShot?: (caption: string, dataUrl: string) => void;
+  onLog?: (msg: string) => void;
+}
+
+export async function publishCafe(params: PublishCafeParams): Promise<{ url: string }> {
+  const { userId, cafeId, cafeUrl, menuId, title, content, showWindow = false, onShot, onLog = console.log } = params;
+  if (!naverSessionExists(userId)) throw new Error("네이버 세션 없음(먼저 계정 로그인)");
+  const session = readSession<any>(naverSessionName(userId), LEGACY_SESSION_DIRS);
+  const cookies = await ensureLiveSessionNaver(userId, onLog, session);
+
+  const browser = await chromium.launch({
+    headless: !showWindow,
+    args: showWindow ? [...LAUNCH_ARGS, "--start-maximized"] : LAUNCH_ARGS,
+    slowMo: showWindow ? 60 : 0,
+  });
+  const context = await browser.newContext({ userAgent: UA, viewport: { width: 1280, height: 900 }, locale: "ko-KR", timezoneId: "Asia/Seoul" });
+  await applyAntiDetection(context);
+  await context.addCookies(cookies);
+  const page = await context.newPage();
+
+  const shot = async (caption: string) => {
+    if (!onShot) return;
+    try { const buf = await page.screenshot({ type: "jpeg", quality: 55 }); onShot(caption, `data:image/jpeg;base64,${buf.toString("base64")}`); } catch {}
+  };
+
+  try {
+    // 신형 SmartEditor ONE 글쓰기 URL(우선) → 실패 시 구형 fallback
+    const writeUrls = [
+      `https://cafe.naver.com/ca-fe/cafes/${cafeId}/menus/${menuId}/articles/write`,
+      `https://cafe.naver.com/ArticleWrite.nhn?clubid=${cafeId}&menuid=${menuId}`,
+    ];
+    let loaded = false;
+    for (const u of writeUrls) {
+      onLog(`[cafe] 글쓰기 페이지 이동: ${u}`);
+      try {
+        await page.goto(u, { waitUntil: "domcontentloaded", timeout: 30000 });
+        await page.waitForTimeout(3000);
+        if (page.url().includes("nidlogin") || page.url().includes("login")) {
+          throw new Error("세션 만료 — 계정 재로그인 필요(계정 관리에서 🔑로그인)");
+        }
+        loaded = true;
+        onLog(`[cafe] 이동 완료, 현재 URL: ${page.url()}`);
+        break;
+      } catch (e) { onLog(`[cafe] ${u} 실패: ${e instanceof Error ? e.message : e} → 다음 형태`); }
+    }
+    if (!loaded) throw new Error("글쓰기 페이지 진입 실패(신형/구형 모두)");
+    await shot("글쓰기 페이지 진입");
+
+    // 🔍 DOM 진단: 프레임 목록 + 제목/본문/버튼 후보 셀렉터 존재 여부를 로그로
+    const frames = page.frames();
+    onLog(`[cafe][진단] 프레임 ${frames.length}개: ${frames.map(f => f.name() || f.url().slice(0, 40)).join(" | ")}`);
+
+    const diag = await page.evaluate(() => {
+      const check = (sels: string[]) => sels.map(s => ({ s, n: document.querySelectorAll(s).length }));
+      return {
+        title: check(["textarea.textarea_input", ".article_title input", "input[placeholder*='제목']", ".se-title-input", "#subject"]),
+        editor: check([".se-content", ".se_component_wrap", "iframe#SmartEditorIframe", ".ProseMirror", "textarea#content"]),
+        submit: check(["a.BaseButton--skinGreen", "button.btn_register", "a:has-text('등록')", ".btn_area button", "[class*='writeButton']"]),
+        iframes: Array.from(document.querySelectorAll("iframe")).map(f => (f as HTMLIFrameElement).id || (f as HTMLIFrameElement).name || (f as HTMLIFrameElement).src.slice(0, 40)),
+      };
+    }).catch((e) => ({ error: String(e) }));
+    onLog(`[cafe][진단] DOM 후보: ${JSON.stringify(diag)}`);
+
+    // ⚠️ 여기까지가 1차(구조 파악). 실제 입력/발행은 위 진단 로그로 셀렉터 확정 후 다음 버전에서 연결.
+    // 지금은 안전하게 "발행 직전"까지만 가고 실제 등록은 하지 않는다(오발행 방지).
+    onLog(`[cafe] ⚠️ 발행 직전까지 도달(진단 모드). 제목="${title}" 본문 ${content.length}자. 실제 등록은 셀렉터 확정 후 연결.`);
+    await shot("발행 직전(진단 모드)");
+
+    await browser.close();
+    return { url: "(진단 모드 — 실제 발행 안 함)" };
+  } catch (e) {
+    await shot("오류 발생 시점").catch(() => {});
+    await browser.close().catch(() => {});
+    throw e;
+  }
+}
+
 /* ── 마커 및 영문 섞임 텍스트 정리 ── */
 export function cleanContent(text: string): string {
   return text

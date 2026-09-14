@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards } from "./naver";
+import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards, publishCafe } from "./naver";
 import { saveTistorySession, publishTistory, tistorySessionExists, deleteTistorySession } from "./tistory";
 import { fetchPendingJobs, updateJob, claimPendingJob, finishQueuedHistory, useQuota, refundQuota, checkPublishEntitlement, incrementDailyPublish } from "./supabase";
 import { acquireAccountLock } from "./account-lock";
@@ -172,6 +172,30 @@ app.post("/api/cafe/boards", async (req, res) => {
   } finally { finishWork(); }
 });
 
+
+/* ── ☕ 카페: 글 발행(진단 모드) ── */
+app.post("/api/cafe/publish", async (req, res) => {
+  const finishWork = beginWork();
+  try {
+    const { userId, cafeId, cafeUrl, menuId, title, content, showWindow } = req.body || {};
+    if (!userId || !cafeId || !menuId || !title || !content) {
+      return res.status(400).json({ success: false, error: "userId, cafeId, menuId, title, content 필요" });
+    }
+    const logs: string[] = [];
+    const shots: { caption: string; dataUrl: string }[] = [];
+    try {
+      const r = await publishCafe({
+        userId, cafeId, cafeUrl, menuId, title, content,
+        showWindow: showWindow === true || showWindow === "true",
+        onLog: (m) => { logs.push(m); console.log(m); },
+        onShot: (caption, dataUrl) => { shots.push({ caption, dataUrl }); },
+      });
+      res.json({ success: true, url: r.url, logs, shots });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message, logs, shots });
+    }
+  } finally { finishWork(); }
+});
 
 /* ── Google 세션 상태 확인 ── */
 app.get("/api/google/session-exists/:userId", (req, res) => {
