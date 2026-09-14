@@ -193,13 +193,18 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
           <h2 style={{ color: "var(--m-text)", fontSize: 20, marginBottom: 6 }}>
             {TABS.find((t) => t.k === tab)?.ico} {TABS.find((t) => t.k === tab)?.label}
           </h2>
-          {tab === "accounts" ? (
-            <AccountsTab selected={selectedAccs} onToggle={toggleAcc} log={log} />
-          ) : tab === "flow" ? (
-            <FlowTab log={log} />
-          ) : tab === "write" ? (
+          {/* 🔴 탭을 옮겨도 언마운트하지 않는다(상태·진행 유지) — 방문한 탭은 계속 살려두고 display로만 숨김.
+              퍼블리 불변 원칙: 탭 이동/화면 내림에도 안 꺼짐(조건부 렌더 금지). */}
+          <div style={{ display: tab === "write" ? "block" : "none" }}>
             <WriteTab selected={selectedAccs} log={log} showWindow={showWindow} />
-          ) : (
+          </div>
+          <div style={{ display: tab === "accounts" ? "block" : "none" }}>
+            <AccountsTab selected={selectedAccs} onToggle={toggleAcc} log={log} />
+          </div>
+          <div style={{ display: tab === "flow" ? "block" : "none" }}>
+            <FlowTab log={log} />
+          </div>
+          {!["write", "accounts", "flow"].includes(tab) && (
             <p style={{ color: "var(--m-sub)", fontSize: 13, lineHeight: 1.6 }}>이 기능은 준비 중이에요 (STEP 로드맵 순서대로 구현).</p>
           )}
         </div>
