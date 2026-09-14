@@ -1,6 +1,6 @@
 // 📝 카페 글쓰기·발행 — 계정선택 → 카페선택 → 게시판선택 → 키워드 → AI글 → 발행
 // 카페 목록/게시판은 봇 필요(데스크톱 앱). AI 글 생성은 웹에서도 됨(Gemini 직접).
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { botFetch, BOT_BASE } from "../lib/botApi";
 import { getGeminiKey, setGeminiKey, generateCafePost } from "../lib/gemini";
 import { listFlowAccounts } from "../lib/flowAccounts";
@@ -47,6 +47,14 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [useLink, setUseLink] = useState(true);
   const [draftOnly, setDraftOnly] = useState(true); // 처음엔 안전하게 임시등록 기본 ON
   const ONPARTNER = { name: "온파트너", url: "https://partner.yuanfnb.com" };
+
+  // ── 🔁 순차 발행(여러 키워드 자동) + 제어 4개(발행시작/정지/이어가기/취소) ──
+  const [seqKeywords, setSeqKeywords] = useState("");
+  const [runState, setRunState] = useState<"idle" | "running" | "paused">("idle");
+  const [seqProg, setSeqProg] = useState({ idx: 0, total: 0, ok: 0, fail: 0 });
+  const stopRef = useRef(false);   // 취소
+  const pauseRef = useRef(false);  // 정지
+  const resumeIdxRef = useRef(0);  // 이어가기 시작 인덱스
 
   const accId = [...selected][0];
   const cafeName = cafes.find((c) => c.cafeId === cafeId)?.name || "";
@@ -164,6 +172,60 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     } catch (e: any) {
       log.push(`봇 연결 실패: ${e?.message || e} (데스크톱 앱에서 실행 필요)`, "error", cafeName);
     } finally { setBusy(null); }
+  }
+
+  // 발행 1건 요청(순차 발행에서 재사용). 성공 여부 반환.
+  async function sendOnePublish(kw: string, post: { title: string; body: string; faq: string }): Promise<boolean> {
+    const links = [
+      ...(useLink && linkUrl.trim() ? [{ name: linkName.trim() || linkUrl.trim(), url: linkUrl.trim() }] : []),
+      { name: ONPARTNER.name, url: ONPARTNER.url },
+    ];
+    let flowSlots: number[] = [];
+    let imgPrompts: string[] = [];
+    if (imgCount > 0) {
+      const fa = await listFlowAccounts().catch(() => []);
+      flowSlots = fa.filter(a => a.connected).map(a => a.slot ?? 0);
+      const angles = ["밝고 자연스러운 사진", "감성적인 분위기의 사진", "깔끔한 클로즈업 사진", "생활감 있는 연출 사진", "따뜻한 색감의 사진"];
+      imgPrompts = Array.from({ length: imgCount }, (_, i) => `${kw} 관련 ${angles[i % angles.length]}, 텍스트 없이`);
+    }
+    try {
+      const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title: post.title, greeting: useGreeting ? savedGreeting : "", body: post.body, links, faq: post.faq, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
+      });
+      const d = await res.json();
+      (d.logs || []).forEach((m: string) => log.push(m, m.includes("⚠️") ? "warn" : (m.includes("실패") || m.includes("오류")) ? "error" : "info", cafeName));
+      (d.shots || []).forEach((s: any) => log.shot(s.caption, s.dataUrl, cafeName));
+      if (d.success) { log.push(`✅ 발행 완료: ${d.url}`, "success", cafeName); return true; }
+      log.push(`발행 실패: ${d.error || "?"}`, "error", cafeName); return false;
+    } catch (e: any) { log.push(`봇 연결 실패: ${e?.message || e}`, "error", cafeName); return false; }
+  }
+
+  // 🔁 순차 발행 루프(골든시드 방식): 키워드마다 AI생성+발행, 글 사이에서 정지/취소 체크.
+  async function runSeq(fromIdx: number) {
+    const kws = seqKeywords.split("\n").map(s => s.trim()).filter(Boolean);
+    if (!kws.length) { log.push("발행할 키워드를 한 줄에 하나씩 입력하세요", "warn"); return; }
+    if (!accId || !cafeId || !menuId) { log.push("계정·카페·게시판을 먼저 선택하세요", "warn"); return; }
+    stopRef.current = false; pauseRef.current = false;
+    setRunState("running");
+    setSeqProg((p) => ({ ...p, total: kws.length, idx: fromIdx, ...(fromIdx === 0 ? { ok: 0, fail: 0 } : {}) }));
+    log.push(fromIdx === 0 ? `━━ 🔁 순차 발행 시작: ${kws.length}개 키워드 ━━` : `▶ 이어가기: ${fromIdx + 1}번째부터`, "sys", cafeName);
+    let ok = seqProg.ok, fail = seqProg.fail;
+    for (let i = fromIdx; i < kws.length; i++) {
+      if (stopRef.current) { log.push(`🛑 취소됨 (완료 ${ok}·실패 ${fail})`, "warn", cafeName); setRunState("idle"); return; }
+      if (pauseRef.current) { resumeIdxRef.current = i; log.push(`⏸ 정지됨 — ${i + 1}번째에서 멈춤 (완료 ${ok}·실패 ${fail})`, "warn", cafeName); setRunState("paused"); return; }
+      setSeqProg({ idx: i, total: kws.length, ok, fail });
+      log.push(`[${i + 1}/${kws.length}] "${kws[i]}" AI 생성 중…`, "progress", cafeName);
+      try {
+        const post = await generateCafePost(kws[i], cafeName || "카페", boardName || "게시판", lengthChars, (m) => log.push(m, "progress"));
+        log.push(`[${i + 1}/${kws.length}] 제목: ${post.title}`, "info", cafeName);
+        const success = await sendOnePublish(kws[i], post);
+        if (success) ok++; else fail++;
+      } catch (e: any) { fail++; log.push(`[${i + 1}] 생성 실패: ${e?.message || e}`, "error", cafeName); }
+      setSeqProg({ idx: i + 1, total: kws.length, ok, fail });
+    }
+    log.push(`━━ 🎉 순차 발행 완료: 성공 ${ok} · 실패 ${fail} ━━`, "success", cafeName);
+    setRunState("idle");
   }
 
   return (
@@ -341,7 +403,41 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       <button className="moca-w-btn" disabled={busy === "publish"} onClick={publish} style={{ width: "100%", background: draftOnly ? "var(--m-tabhover)" : "var(--m-gold)", color: draftOnly ? "var(--m-text)" : "var(--m-goldink)", border: draftOnly ? "1px solid var(--m-line2)" : "none", borderRadius: 10, padding: "15px", fontSize: 16, fontWeight: 800, cursor: busy === "publish" ? "default" : "pointer", opacity: busy === "publish" ? 0.6 : 1 }}>
         {busy === "publish" ? "발행 중…" : draftOnly ? `🧪 임시등록 테스트${imgCount ? ` (이미지 ${imgCount}장)` : ""}` : `🚀 카페에 발행${imgCount ? ` (이미지 ${imgCount}장)` : ""}`}
       </button>
-      <p style={{ color: "var(--m-dim)", fontSize: 11.5, textAlign: "center", marginTop: 8 }}>발행봇(에디터 조작 + 창보기/캡처)은 실계정 검증과 함께 연결 예정</p>
+      <p style={{ color: "var(--m-dim)", fontSize: 11.5, textAlign: "center", marginTop: 8 }}>위는 단일 글(편집 후 1건) 발행. 아래는 여러 키워드 자동 순차 발행.</p>
+
+      {/* 🔁 순차 발행 (여러 키워드 자동 + 제어 4개) */}
+      <div style={{ ...card, marginTop: 20, border: "1px solid var(--m-gold)" }}>
+        <label style={stepLabel}>🔁 순차 발행 <span style={{ color: "var(--m-dim)", fontWeight: 400, fontSize: 12 }}>· 키워드 여러 개를 한 줄에 하나씩 → 자동으로 AI 글 생성 + 발행 반복</span></label>
+        <textarea className="moca-in" style={{ ...inputStyle, minHeight: 90, resize: "vertical", marginBottom: 10, fontFamily: "monospace" }} value={seqKeywords} onChange={(e) => setSeqKeywords(e.target.value)} placeholder={"과일 손질하는 법\n제철 채소 보관법\n생선 비린내 제거"} disabled={runState !== "idle"} />
+
+        {runState !== "idle" && (
+          <div style={{ marginBottom: 10, padding: "8px 12px", background: "var(--m-input)", borderRadius: 8, fontSize: 13, color: "var(--m-text)" }}>
+            {runState === "running" ? "▶ 진행 중" : "⏸ 정지됨"} · {seqProg.idx}/{seqProg.total} · ✅{seqProg.ok} ❌{seqProg.fail}
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <button className="moca-w-btn" disabled={runState !== "idle"} onClick={() => runSeq(0)}
+            style={{ gridColumn: "1/3", background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 9, padding: "13px", fontSize: 15, fontWeight: 800, cursor: runState !== "idle" ? "default" : "pointer", opacity: runState !== "idle" ? 0.5 : 1 }}>
+            ▶ 발행 시작
+          </button>
+          <button className="moca-w-btn" disabled={runState !== "running"} onClick={() => { pauseRef.current = true; log.push("⏸ 정지 요청 — 현재 글 끝나면 멈춰요", "warn"); }}
+            style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 9, padding: "11px", fontSize: 14, fontWeight: 700, cursor: runState !== "running" ? "default" : "pointer", opacity: runState !== "running" ? 0.5 : 1 }}>
+            ⏸ 정지
+          </button>
+          <button className="moca-w-btn" disabled={runState !== "paused"} onClick={() => runSeq(resumeIdxRef.current)}
+            style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 9, padding: "11px", fontSize: 14, fontWeight: 700, cursor: runState !== "paused" ? "default" : "pointer", opacity: runState !== "paused" ? 0.5 : 1 }}>
+            ⏭ 이어가기
+          </button>
+          <button className="moca-w-btn" disabled={runState === "idle"} onClick={() => { stopRef.current = true; pauseRef.current = false; log.push("🛑 취소 요청 — 현재 글 끝나면 중단", "error"); }}
+            style={{ gridColumn: "1/3", background: runState === "idle" ? "var(--m-tabhover)" : "var(--m-log-error)", color: runState === "idle" ? "var(--m-sub)" : "#fff", border: "none", borderRadius: 9, padding: "11px", fontSize: 14, fontWeight: 700, cursor: runState === "idle" ? "default" : "pointer" }}>
+            🛑 취소
+          </button>
+        </div>
+        <p style={{ color: "var(--m-dim)", fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
+          위의 글 길이·이미지 장수·인사말·링크·임시등록 설정을 그대로 써요. 정지=현재 글 끝나고 멈춤(이어가기 가능), 취소=완전 중단.
+        </p>
+      </div>
     </div>
   );
 }
