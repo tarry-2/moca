@@ -684,10 +684,12 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
   const session = readSession<any>(naverSessionName(userId), LEGACY_SESSION_DIRS);
   const cookies = await ensureLiveSessionNaver(userId, onLog, session);
 
+  // ★네이버 스마트에디터ONE은 headless(백그라운드)에서 편집영역이 활성화 안 됨(본문 입력·등록 실패).
+  //   그래서 카페 발행은 항상 실제 창(headed)으로 띄운다. showWindow는 slowMo(사람처럼 천천히)만 제어.
   const browser = await chromium.launch({
-    headless: !showWindow,
-    args: showWindow ? [...LAUNCH_ARGS, "--start-maximized"] : LAUNCH_ARGS,
-    slowMo: showWindow ? 60 : 0,
+    headless: false,
+    args: [...LAUNCH_ARGS, "--start-maximized"],
+    slowMo: showWindow ? 60 : 20,
   });
   const context = await browser.newContext({ userAgent: UA, viewport: { width: 1280, height: 900 }, locale: "ko-KR", timezoneId: "Asia/Seoul" });
   await applyAntiDetection(context);
@@ -789,9 +791,8 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
       }
     }
     if (!bodyClicked) throw new Error("본문 입력 영역을 찾지 못했어요(카페 에디터 구조 확인 필요)");
-    await page.waitForTimeout(1000); // 편집영역 활성화 대기
+    await page.waitForTimeout(1200); // 편집영역 활성화 대기
 
-    // 활성화 후 contenteditable 확인(디버깅용)
     const editableCount = await page.locator("[contenteditable='true']").count().catch(() => 0);
     onLog(`[cafe] 편집영역 활성화 확인: contenteditable ${editableCount}개`);
 
@@ -800,6 +801,14 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
       if (lines[i]) await page.keyboard.type(lines[i], { delay: 5 });
       if (i < lines.length - 1) await page.keyboard.press("Enter");
     }
+    await page.waitForTimeout(500);
+    // ✅ 실제로 본문이 들어갔는지 검증(스마트에디터 본문 텍스트 길이 확인)
+    const typedLen = await page.evaluate(() => {
+      const se = document.querySelector(".se-content, .se-main-container");
+      return se ? (se.textContent || "").replace(/\s/g, "").length : 0;
+    }).catch(() => 0);
+    onLog(`[cafe] 본문 입력 검증: 에디터에 실제 ${typedLen}자 감지 (요청 ${bodyText.replace(/\s/g, "").length}자)`);
+    if (typedLen < 20) throw new Error(`본문이 에디터에 안 들어갔어요(감지 ${typedLen}자). 편집영역 활성화 실패 — 창보기 ON으로 재시도 필요`);
     onLog(`[cafe] ✅ 본문 입력 완료 (${bodyText.length}자)`);
     await shot("본문 입력 완료");
 
@@ -808,20 +817,31 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
 
     // 3) 등록(또는 임시등록)
     await page.waitForTimeout(600);
+    const urlBefore = page.url();
     const submitSel = draftOnly ? "button.btn_temp_save" : "a.BaseButton--skinGreen";
     const submitEl = page.locator(submitSel).first();
     await submitEl.waitFor({ state: "visible", timeout: 10000 });
     onLog(`[cafe] ${draftOnly ? "임시등록" : "등록"} 버튼 클릭…`);
     await submitEl.click();
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(2500);
     // 확인 팝업이 뜨면 확인 클릭
     try {
-      const confirmEl = page.locator("button.BaseButton--green, a.BaseButton--skinGreen").filter({ hasText: "확인" }).first();
-      if (await confirmEl.count()) { await confirmEl.click(); await page.waitForTimeout(1500); }
+      const confirmEl = page.locator("button.BaseButton--green, a.BaseButton--skinGreen, button").filter({ hasText: /^확인$/ }).first();
+      if (await confirmEl.count()) { onLog("[cafe] 확인 팝업 클릭"); await confirmEl.click(); await page.waitForTimeout(2000); }
     } catch {}
+    await page.waitForTimeout(2000);
 
     const finalUrl = page.url();
-    onLog(`[cafe] 🎉 ${draftOnly ? "임시등록" : "발행"} 완료! URL: ${finalUrl}`);
+    if (draftOnly) {
+      // 임시등록은 URL이 안 바뀔 수 있음 → 성공 토스트/상태로 판단은 어려우니 안내만
+      onLog(`[cafe] 🎉 임시등록 시도 완료 (카페 > 내가 쓴 글 > 임시저장에서 확인)`);
+    } else {
+      // 실제 등록은 write 페이지를 벗어나 글 상세로 이동해야 성공
+      if (finalUrl.includes("/write")) {
+        throw new Error(`발행 실패 추정 — 등록 후에도 글쓰기 페이지에 머물러 있어요(${finalUrl}). 등록 버튼/확인 팝업 확인 필요`);
+      }
+      onLog(`[cafe] 🎉 발행 완료! 글 주소: ${finalUrl}`);
+    }
     await shot(draftOnly ? "임시등록 완료" : "발행 완료");
 
     await browser.close();
