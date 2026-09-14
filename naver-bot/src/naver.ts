@@ -770,13 +770,36 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
 
     // 2) 본문 = 인사말 + 본문 + 링크 + FAQ (문단별 입력, 스마트에디터는 fill 안 먹음)
     const bodyText = [greeting, body, linkText.trim(), faq].filter(s => s && s.trim()).join("\n\n");
-    const editorEl = page.locator(".se-section-text [contenteditable='true'], .se-content [contenteditable='true'], .se-main-container .se-component [contenteditable='true']").first();
-    await editorEl.waitFor({ state: "visible", timeout: 15000 });
-    await editorEl.click();
-    await page.waitForTimeout(400);
+    // 본문 영역 후보(진단 기반: 카페는 .se-content/.se-component/contenteditable). 여러 개 시도.
+    const bodySelectors = [
+      ".se-content .se-text-paragraph[contenteditable='true']",
+      ".se-content [contenteditable='true']",
+      ".se-component-content [contenteditable='true']",
+      ".se-component [contenteditable='true']",
+      ".se-main-container [contenteditable='true']:not([data-placeholder*='제목'])",
+    ];
+    let bodyClicked = false;
+    for (const sel of bodySelectors) {
+      const el = page.locator(sel).first();
+      const n = await el.count().catch(() => 0);
+      if (n > 0) {
+        try { await el.click({ timeout: 5000 }); bodyClicked = true; onLog(`[cafe] 본문 영역 클릭: ${sel}`); break; }
+        catch (e) { onLog(`[cafe] 본문 클릭 실패(${sel}) → 다음 후보`); }
+      }
+    }
+    if (!bodyClicked) {
+      // 최후: 제목 아닌 마지막 contenteditable 클릭
+      const all = page.locator("[contenteditable='true']");
+      const cnt = await all.count().catch(() => 0);
+      onLog(`[cafe] 본문 후보 못 찾음 → contenteditable ${cnt}개 중 마지막 클릭 시도`);
+      if (cnt > 0) { try { await all.last().click({ timeout: 5000 }); bodyClicked = true; } catch {} }
+    }
+    if (!bodyClicked) throw new Error("본문 입력 영역을 찾지 못했어요(카페 에디터 구조 확인 필요)");
+    await page.waitForTimeout(500);
+
     const lines = bodyText.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      if (lines[i]) await page.keyboard.type(lines[i], { delay: 8 });
+      if (lines[i]) await page.keyboard.type(lines[i], { delay: 5 });
       if (i < lines.length - 1) await page.keyboard.press("Enter");
     }
     onLog(`[cafe] ✅ 본문 입력 완료 (${bodyText.length}자)`);
@@ -806,6 +829,7 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     await browser.close();
     return { url: finalUrl };
   } catch (e) {
+    onLog(`[cafe] ❌ 발행 오류: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`);
     await shot("오류 발생 시점").catch(() => {});
     await browser.close().catch(() => {});
     throw e;
