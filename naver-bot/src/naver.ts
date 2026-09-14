@@ -905,13 +905,17 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
       await page.keyboard.press("Enter").catch(() => {});
       // 2) 인사말
       if (greetPara) { await typeText(greetPara); await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); }
-      // 3) 나머지 이미지들을 문단 앞에 배치: [이미지 → 글] 반복
+      // 3) 인사말 다음엔 '글 먼저' 나오고, 그 뒤부터 [이미지 → 글] 반복.
+      //    앞쪽 문단 몇 개는 이미지 없이 먼저 쓰고(도입부), 그 다음 구간부터 이미지를 문단 앞에 끼운다.
       const rest = imgFiles.slice(1);
-      const gap = rest.length ? Math.max(1, Math.floor(allParas.length / rest.length)) : allParas.length + 1;
+      const lead = Math.min(1, allParas.length); // 도입부: 이미지 없이 먼저 쓸 문단 수(최소 1개)
+      // 이미지를 넣을 시작 문단 인덱스들: lead 이후 구간에 고르게
+      const afterParas = allParas.length - lead;
+      const gap = rest.length ? Math.max(1, Math.floor(afterParas / rest.length)) : allParas.length + 1;
       let imgIdx = 0;
       for (let p = 0; p < allParas.length; p++) {
-        // 구간 시작마다 이미지 먼저(이미지 → 글)
-        if (imgIdx < rest.length && p % gap === 0) {
+        // 도입부(lead) 지난 뒤부터, 구간 시작마다 이미지 먼저(이미지 → 글)
+        if (p >= lead && imgIdx < rest.length && (p - lead) % gap === 0) {
           await uploadImages([rest[imgIdx++]]);
           await page.keyboard.press("Enter").catch(() => {});
         }
