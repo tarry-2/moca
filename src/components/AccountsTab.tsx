@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CafeAccount, AccountInput, listAccounts, addAccount, updateAccount, deleteAccount, setSessionSaved } from "../lib/accounts";
 import { botFetch, BOT_BASE } from "../lib/botApi";
+import PasswordInput from "./PasswordInput";
 import type { UseLog } from "../lib/useLog";
 
 const inputStyle: React.CSSProperties = {
@@ -113,7 +114,7 @@ export default function AccountsTab({ selected, onToggle, log }: Props) {
         </p>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
           <div><label style={labelStyle}>네이버 아이디 *</label><input className="moca-in" style={inputStyle} value={form.naver_id} onChange={(e) => { setForm({ ...form, naver_id: e.target.value }); setErr(""); }} placeholder="아이디" /></div>
-          <div><label style={labelStyle}>비밀번호</label><input className="moca-in" style={inputStyle} type="password" value={form.naver_pw || ""} onChange={(e) => setForm({ ...form, naver_pw: e.target.value })} placeholder="비밀번호" /></div>
+          <div><label style={labelStyle}>비밀번호</label><PasswordInput value={form.naver_pw || ""} onChange={(v) => setForm({ ...form, naver_pw: v })} placeholder="비밀번호" /></div>
           <div><label style={labelStyle}>닉네임(표시용)</label><input className="moca-in" style={inputStyle} value={form.nickname || ""} onChange={(e) => setForm({ ...form, nickname: e.target.value })} placeholder="예: 육아맘계정" /></div>
           <div><label style={labelStyle}>프록시 sessid(고정IP)</label><input className="moca-in" style={inputStyle} value={form.proxy_sessid || ""} onChange={(e) => setForm({ ...form, proxy_sessid: e.target.value })} placeholder="비우면 미사용" /></div>
         </div>
@@ -144,7 +145,7 @@ export default function AccountsTab({ selected, onToggle, log }: Props) {
                   <div key={a.id} style={{ border: "1px solid var(--m-gold)", borderRadius: 10, padding: 12, background: "var(--m-input)" }}>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
                       <input className="moca-in" style={inputStyle} value={editForm.naver_id} onChange={(e) => setEditForm({ ...editForm, naver_id: e.target.value })} placeholder="아이디" />
-                      <input className="moca-in" style={inputStyle} type="password" value={editForm.naver_pw || ""} onChange={(e) => setEditForm({ ...editForm, naver_pw: e.target.value })} placeholder="비밀번호" />
+                      <PasswordInput value={editForm.naver_pw || ""} onChange={(v) => setEditForm({ ...editForm, naver_pw: v })} placeholder="비밀번호" />
                       <input className="moca-in" style={inputStyle} value={editForm.nickname || ""} onChange={(e) => setEditForm({ ...editForm, nickname: e.target.value })} placeholder="닉네임" />
                       <input className="moca-in" style={inputStyle} value={editForm.proxy_sessid || ""} onChange={(e) => setEditForm({ ...editForm, proxy_sessid: e.target.value })} placeholder="프록시 sessid" />
                     </div>

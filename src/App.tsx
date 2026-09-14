@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import LogConsole from "./components/LogConsole";
 import AccountsTab from "./components/AccountsTab";
 import WriteTab from "./components/WriteTab";
+import PasswordInput from "./components/PasswordInput";
 import { useLog } from "./lib/useLog";
 
 // 임시 관리자 게이트. TODO(STEP1): Supabase moca_admins 테이블 인증으로 교체.
@@ -105,15 +106,16 @@ function AdminLogin({ onOk, theme, onToggleTheme }: { onOk: () => void; theme: T
         <div style={{ fontSize: 56 }}>☕</div>
         <h1 style={{ color: "var(--m-gold)", fontSize: 34, letterSpacing: 5, margin: "6px 0 2px", fontWeight: 800 }}>MOCA</h1>
         <p style={{ color: "var(--m-sub)", fontSize: 12.5, marginBottom: 22 }}>Marketing On CAfe · 관리자</p>
-        <input
-          className="moca-in"
-          type="password"
-          value={pw}
-          onChange={(e) => { setPw(e.target.value); setErr(""); }}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-          placeholder="관리자 비밀번호"
-          style={{ width: "100%", padding: "14px 16px", fontSize: 16, borderRadius: 10, border: "1px solid var(--m-line2)", background: "var(--m-input)", color: "var(--m-text)", marginBottom: 10 }}
-        />
+        <div style={{ marginBottom: 10 }}>
+          <PasswordInput
+            value={pw}
+            onChange={(v) => { setPw(v); setErr(""); }}
+            onEnter={submit}
+            placeholder="관리자 비밀번호"
+            autoFocus
+            style={{ padding: "14px 40px 14px 16px", fontSize: 16, borderRadius: 10 }}
+          />
+        </div>
         {err && <div style={{ color: "var(--m-log-error)", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
         <button className="moca-primary" onClick={submit} style={{ width: "100%", padding: "14px", fontSize: 16, fontWeight: 800, borderRadius: 10, border: "none", background: "var(--m-gold)", color: "var(--m-goldink)", cursor: "pointer" }}>
           로그인

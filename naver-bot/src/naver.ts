@@ -476,42 +476,104 @@ async function openCafeContext(userId: string) {
   return { browser, page };
 }
 
+// 응답에서 카페 배열을 최대한 유연하게 찾아 파싱(구조가 버전마다 달라서 재귀 탐색).
+function parseCafeArray(j: any): MyCafe[] {
+  const out: MyCafe[] = [];
+  const seen = new Set<string>();
+  const visit = (node: any, depth: number) => {
+    if (!node || depth > 6) return;
+    if (Array.isArray(node)) {
+      for (const it of node) {
+        if (it && typeof it === "object") {
+          const id = it.cafeId ?? it.clubId ?? it.clubid ?? it.cafeid;
+          const name = it.cafeName ?? it.cafename ?? it.clubName ?? it.clubname ?? it.name;
+          if (id && name) {
+            const cafeId = String(id);
+            if (!seen.has(cafeId)) {
+              seen.add(cafeId);
+              out.push({ cafeId, name: String(name), url: String(it.cafeUrl ?? it.cluburl ?? it.url ?? it.cafeUrlPath ?? "") });
+            }
+          }
+          visit(it, depth + 1);
+        }
+      }
+      return;
+    }
+    if (typeof node === "object") for (const k of Object.keys(node)) visit(node[k], depth + 1);
+  };
+  visit(j, 0);
+  return out;
+}
+
 // ☕ 내가 가입/개설한 카페 목록
+// 전략: ①로그인 세션으로 카페 홈 이동 ②페이지가 실제 호출하는 apis.naver.com/cafe-web JSON 응답을
+//        response 리스너로 가로채 자동 발견 ③병행으로 알려진 후보 엔드포인트도 fetch. raw를 로그로 남김.
 export async function getMyCafes(userId: string): Promise<MyCafe[]> {
   const { browser, page } = await openCafeContext(userId);
+  const captured: { url: string; body: string }[] = [];
   try {
     console.log("[cafe] 내 카페 목록 조회 시작");
-    await page.goto("https://section.cafe.naver.com/", { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(1500);
-    const result: any = await page.evaluate(async () => {
-      const tries = [
-        "https://apis.naver.com/cafe-web/cafe-mobile/CafeMemberJoinedListV1?perPage=100",
-        "https://apis.naver.com/cafe-web/cafe2/CafeMemberJoinedList?perPage=100",
-      ];
-      for (const url of tries) {
-        try {
-          const r = await fetch(url, { headers: { Accept: "application/json" }, credentials: "include" });
-          if (!r.ok) continue;
-          const j = await r.json();
-          return { url, raw: JSON.stringify(j).slice(0, 800), json: j };
-        } catch (e) { /* 다음 후보 */ }
-      }
-      return { error: "가입 카페 API 후보 전부 실패" };
+    // 카페 관련 JSON 응답 가로채기
+    page.on("response", async (res) => {
+      try {
+        const url = res.url();
+        if (!/apis\.naver\.com\/cafe|cafe-web|gw\.cafe\.naver/.test(url)) return;
+        const ct = res.headers()["content-type"] || "";
+        if (!ct.includes("json")) return;
+        const body = await res.text();
+        if (/cafeName|clubName|cafeId|clubId|joinedCafe/i.test(body)) {
+          captured.push({ url, body });
+          console.log(`[cafe][capture] ${url}\n  ↳ ${body.slice(0, 500)}`);
+        }
+      } catch {}
     });
-    console.log("[cafe] 내 카페 API 응답:", result?.url || result?.error, "|", result?.raw || "");
-    let list: MyCafe[] = [];
-    const j = result?.json;
-    const arr = j?.message?.result?.cafeList || j?.message?.result?.list || j?.result?.cafeList || [];
-    if (Array.isArray(arr)) {
-      list = arr
-        .map((c: any) => ({
-          cafeId: String(c.cafeId ?? c.clubid ?? c.clubId ?? ""),
-          name: String(c.cafeName ?? c.clubname ?? c.name ?? ""),
-          url: String(c.cafeUrl ?? c.cluburl ?? c.url ?? ""),
-        }))
-        .filter((c: MyCafe) => c.cafeId && c.name);
+
+    // 가입 카페가 보이는 페이지들 순차 방문(각 페이지가 자기 API를 호출함)
+    const pages = [
+      "https://section.cafe.naver.com/ca-fe/home/member/joined-cafe",
+      "https://section.cafe.naver.com/",
+      "https://m.cafe.naver.com/",
+    ];
+    for (const p of pages) {
+      try {
+        console.log(`[cafe] 방문: ${p}`);
+        await page.goto(p, { waitUntil: "networkidle", timeout: 25000 });
+        await page.waitForTimeout(2500);
+      } catch (e) { console.log(`[cafe] ${p} 이동 오류(무시): ${e instanceof Error ? e.message : e}`); }
+      if (captured.length) break;
     }
-    console.log(`[cafe] 파싱된 카페 ${list.length}개`);
+
+    // 병행: 알려진 후보 엔드포인트 직접 fetch(가로채기 실패 대비)
+    if (!captured.length) {
+      const probe: any = await page.evaluate(async () => {
+        const tries = [
+          "https://apis.naver.com/cafe-web/cafe-home-api/v1/cafes/join?page=1&perPage=100",
+          "https://apis.naver.com/cafe-web/cafe-mobile/CafeMemberJoinedListV1?perPage=100",
+          "https://apis.naver.com/cafe-web/cafe2/CafeMemberJoinedList?perPage=100",
+          "https://apis.naver.com/cafe-web/cafe-notification-api/v1/cafes",
+        ];
+        const results: any[] = [];
+        for (const url of tries) {
+          try {
+            const r = await fetch(url, { headers: { Accept: "application/json" }, credentials: "include" });
+            const body = await r.text();
+            results.push({ url, status: r.status, body: body.slice(0, 500) });
+          } catch (e: any) { results.push({ url, error: String(e?.message || e) }); }
+        }
+        return results;
+      });
+      console.log("[cafe] 후보 프로브 결과:", JSON.stringify(probe, null, 2));
+      for (const r of probe || []) {
+        if (r.status === 200 && r.body) captured.push({ url: r.url, body: r.body });
+      }
+    }
+
+    // 파싱
+    let list: MyCafe[] = [];
+    for (const c of captured) {
+      try { const parsed = parseCafeArray(JSON.parse(c.body)); if (parsed.length) { list = parsed; break; } } catch {}
+    }
+    console.log(`[cafe] 파싱된 카페 ${list.length}개 (캡처 ${captured.length}건)`);
     await browser.close();
     return list;
   } catch (e) {

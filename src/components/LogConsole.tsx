@@ -52,10 +52,10 @@ export default function LogConsole({ log, title = "실시간 로그", showWindow
     ) : null;
     if (e.type === "shot") {
       return (
-        <div key={e.id} style={{ display: "flex", alignItems: "flex-start", padding: "4px 0", gap: 2 }}>
+        <div key={e.id} style={{ display: "flex", alignItems: "flex-start", padding: "4px 0", gap: 2, minWidth: 0 }}>
           {time}
           {tag}
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 0 }}>
             <span style={{ color: "var(--m-log-sys)" }}>📸 {e.caption ?? "화면 캡처"}</span>
             {e.dataUrl && (
               <img src={e.dataUrl} alt={e.caption ?? "캡처"} onClick={() => setZoom(e.dataUrl!)} style={{ maxWidth: 260, width: "100%", borderRadius: 8, border: "1px solid var(--m-line)", cursor: "zoom-in" }} />
@@ -65,10 +65,10 @@ export default function LogConsole({ log, title = "실시간 로그", showWindow
       );
     }
     return (
-      <div key={e.id} style={{ display: "flex", alignItems: "flex-start", padding: "2px 0" }}>
+      <div key={e.id} style={{ display: "flex", alignItems: "flex-start", padding: "2px 0", minWidth: 0 }}>
         {time}
         {tag}
-        <span style={{ color: `var(--m-log-${e.color})`, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{e.msg}</span>
+        <span style={{ color: `var(--m-log-${e.color})`, whiteSpace: "pre-wrap", overflowWrap: "anywhere", flex: 1, minWidth: 0 }}>{e.msg}</span>
       </div>
     );
   };
