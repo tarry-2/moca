@@ -55,6 +55,12 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const stopRef = useRef(false);   // 취소
   const pauseRef = useRef(false);  // 정지
   const resumeIdxRef = useRef(0);  // 이어가기 시작 인덱스
+  // ⏰ 예약·텀(간격) — 앱 켜둔 상태 예약. 텀=밴 방지(연속 도배 금지)
+  const [useSchedule, setUseSchedule] = useState(false);
+  const [scheduleAt, setScheduleAt] = useState(""); // datetime-local
+  const [termMin, setTermMin] = useState(30);       // 글 사이 간격(분)
+  const [termRand, setTermRand] = useState(true);   // 간격 ±랜덤(사람처럼)
+  const [waitInfo, setWaitInfo] = useState("");     // 대기 상태 표시
 
   const accId = [...selected][0];
   const cafeName = cafes.find((c) => c.cafeId === cafeId)?.name || "";
@@ -201,7 +207,20 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     } catch (e: any) { log.push(`봇 연결 실패: ${e?.message || e}`, "error", cafeName); return false; }
   }
 
-  // 🔁 순차 발행 루프(골든시드 방식): 키워드마다 AI생성+발행, 글 사이에서 정지/취소 체크.
+  // 중단 가능한 대기(1초마다 취소/정지 체크). 취소=false 반환(중단), 완료=true.
+  async function waitControllable(ms: number, label: string): Promise<boolean> {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (stopRef.current || pauseRef.current) return false;
+      const left = Math.ceil((end - Date.now()) / 1000);
+      setWaitInfo(`${label} ${left > 60 ? Math.ceil(left / 60) + "분" : left + "초"} 남음`);
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    setWaitInfo("");
+    return true;
+  }
+
+  // 🔁 순차 발행 루프(골든시드 방식): 예약 대기 → 키워드마다 AI생성+발행, 글 사이 텀. 정지/취소 체크.
   async function runSeq(fromIdx: number) {
     const kws = seqKeywords.split("\n").map(s => s.trim()).filter(Boolean);
     if (!kws.length) { log.push("발행할 키워드를 한 줄에 하나씩 입력하세요", "warn"); return; }
@@ -209,11 +228,23 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     stopRef.current = false; pauseRef.current = false;
     setRunState("running");
     setSeqProg((p) => ({ ...p, total: kws.length, idx: fromIdx, ...(fromIdx === 0 ? { ok: 0, fail: 0 } : {}) }));
-    log.push(fromIdx === 0 ? `━━ 🔁 순차 발행 시작: ${kws.length}개 키워드 ━━` : `▶ 이어가기: ${fromIdx + 1}번째부터`, "sys", cafeName);
+
+    // ⏰ 예약 시각까지 대기(첫 시작 때만)
+    if (fromIdx === 0 && useSchedule && scheduleAt) {
+      const target = new Date(scheduleAt).getTime();
+      const wait = target - Date.now();
+      if (wait > 0) {
+        log.push(`⏰ 예약: ${new Date(target).toLocaleString("ko-KR")}까지 대기 (앱을 켜두세요)`, "sys", cafeName);
+        const ok = await waitControllable(wait, "⏰ 예약 발행까지");
+        if (!ok) { log.push(stopRef.current ? "🛑 예약 취소됨" : "⏸ 예약 대기 중 정지", "warn", cafeName); setRunState(stopRef.current ? "idle" : "paused"); if (pauseRef.current) resumeIdxRef.current = 0; return; }
+      }
+    }
+
+    log.push(fromIdx === 0 ? `━━ 🔁 순차 발행 시작: ${kws.length}개 키워드 (간격 ${termMin}분${termRand ? "±랜덤" : ""}) ━━` : `▶ 이어가기: ${fromIdx + 1}번째부터`, "sys", cafeName);
     let ok = seqProg.ok, fail = seqProg.fail;
     for (let i = fromIdx; i < kws.length; i++) {
-      if (stopRef.current) { log.push(`🛑 취소됨 (완료 ${ok}·실패 ${fail})`, "warn", cafeName); setRunState("idle"); return; }
-      if (pauseRef.current) { resumeIdxRef.current = i; log.push(`⏸ 정지됨 — ${i + 1}번째에서 멈춤 (완료 ${ok}·실패 ${fail})`, "warn", cafeName); setRunState("paused"); return; }
+      if (stopRef.current) { log.push(`🛑 취소됨 (완료 ${ok}·실패 ${fail})`, "warn", cafeName); setRunState("idle"); setWaitInfo(""); return; }
+      if (pauseRef.current) { resumeIdxRef.current = i; log.push(`⏸ 정지됨 — ${i + 1}번째에서 멈춤 (완료 ${ok}·실패 ${fail})`, "warn", cafeName); setRunState("paused"); setWaitInfo(""); return; }
       setSeqProg({ idx: i, total: kws.length, ok, fail });
       log.push(`[${i + 1}/${kws.length}] "${kws[i]}" AI 생성 중…`, "progress", cafeName);
       try {
@@ -223,9 +254,21 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
         if (success) ok++; else fail++;
       } catch (e: any) { fail++; log.push(`[${i + 1}] 생성 실패: ${e?.message || e}`, "error", cafeName); }
       setSeqProg({ idx: i + 1, total: kws.length, ok, fail });
+
+      // 글 사이 텀(마지막 글 뒤엔 안 기다림) — 밴 방지
+      if (i < kws.length - 1) {
+        let ms = termMin * 60 * 1000;
+        if (termRand) ms = Math.round(ms * (0.7 + Math.random() * 0.6)); // ±30% 랜덤
+        log.push(`⏳ 다음 글까지 ${Math.round(ms / 60000)}분 대기(밴 방지)`, "progress", cafeName);
+        const cont = await waitControllable(ms, "⏳ 다음 글까지");
+        if (!cont) {
+          if (stopRef.current) { log.push(`🛑 취소됨 (완료 ${ok}·실패 ${fail})`, "warn", cafeName); setRunState("idle"); return; }
+          resumeIdxRef.current = i + 1; log.push(`⏸ 정지됨 — 다음은 ${i + 2}번째 (완료 ${ok}·실패 ${fail})`, "warn", cafeName); setRunState("paused"); return;
+        }
+      }
     }
     log.push(`━━ 🎉 순차 발행 완료: 성공 ${ok} · 실패 ${fail} ━━`, "success", cafeName);
-    setRunState("idle");
+    setRunState("idle"); setWaitInfo("");
   }
 
   return (
@@ -410,9 +453,31 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
         <label style={stepLabel}>🔁 순차 발행 <span style={{ color: "var(--m-dim)", fontWeight: 400, fontSize: 12 }}>· 키워드 여러 개를 한 줄에 하나씩 → 자동으로 AI 글 생성 + 발행 반복</span></label>
         <textarea className="moca-in" style={{ ...inputStyle, minHeight: 90, resize: "vertical", marginBottom: 10, fontFamily: "monospace" }} value={seqKeywords} onChange={(e) => setSeqKeywords(e.target.value)} placeholder={"과일 손질하는 법\n제철 채소 보관법\n생선 비린내 제거"} disabled={runState !== "idle"} />
 
+        {/* ⏰ 예약 + 텀(간격) */}
+        <div style={{ padding: "10px 12px", background: "var(--m-input)", borderRadius: 8, marginBottom: 10, border: "1px solid var(--m-line2)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: useSchedule ? 8 : 0, flexWrap: "wrap" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--m-text)", cursor: "pointer", fontWeight: 700 }}>
+              <input type="checkbox" checked={useSchedule} onChange={(e) => setUseSchedule(e.target.checked)} style={{ width: "auto" }} disabled={runState !== "idle"} /> ⏰ 예약 발행
+            </label>
+            {useSchedule && (
+              <input type="datetime-local" className="moca-in" style={{ ...inputStyle, width: "auto", flex: 1, minWidth: 180 }} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} disabled={runState !== "idle"} />
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, color: "var(--m-text)", fontWeight: 700 }}>⏳ 글 간격</span>
+            <input type="number" className="moca-in" style={{ ...inputStyle, width: 70 }} value={termMin} min={1} onChange={(e) => setTermMin(Math.max(1, Number(e.target.value) || 1))} disabled={runState !== "idle"} />
+            <span style={{ fontSize: 13, color: "var(--m-sub)" }}>분</span>
+            <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: "var(--m-sub)", cursor: "pointer" }}>
+              <input type="checkbox" checked={termRand} onChange={(e) => setTermRand(e.target.checked)} style={{ width: "auto" }} disabled={runState !== "idle"} /> ±랜덤(사람처럼)
+            </label>
+            <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--m-log-warn)" }}>⚠️ 카페는 연속 도배=밴, 간격 권장</span>
+          </div>
+        </div>
+
         {runState !== "idle" && (
           <div style={{ marginBottom: 10, padding: "8px 12px", background: "var(--m-input)", borderRadius: 8, fontSize: 13, color: "var(--m-text)" }}>
             {runState === "running" ? "▶ 진행 중" : "⏸ 정지됨"} · {seqProg.idx}/{seqProg.total} · ✅{seqProg.ok} ❌{seqProg.fail}
+            {waitInfo && <span style={{ color: "var(--m-log-progress)", marginLeft: 8 }}>· {waitInfo}</span>}
           </div>
         )}
 
