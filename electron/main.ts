@@ -352,7 +352,7 @@ function startBotWatchdog() {
 }
 
 const resourceDir = (rel: string) =>
-  isDev ? path.join(__dirname, "../../", rel) : path.join(process.resourcesPath, rel);
+  isDev ? path.join(__dirname, "../", rel) : path.join(process.resourcesPath, rel);
 
 async function startBotServer() {
   await forkBotServer({
@@ -394,15 +394,19 @@ function createWindow() {
 
 function createTray() {
   if (tray) return;
-  const iconPath = path.join(__dirname, process.platform === "darwin" ? "../dist/icon.icns" : "../dist/icon.ico");
-  tray = new Tray(iconPath);
-  tray.setToolTip("Publy · 예약 실행 중");
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "퍼블리 열기", click: () => { if (!mainWindow) createWindow(); mainWindow?.show(); mainWindow?.focus(); } },
-    { type: "separator" },
-    { label: "완전히 종료", click: () => { app.isQuitting = true; app.quit(); } },
-  ]));
-  tray.on("click", () => { if (!mainWindow) createWindow(); mainWindow?.show(); mainWindow?.focus(); });
+  try {
+    const iconPath = path.join(__dirname, process.platform === "darwin" ? "../dist/icon.icns" : "../dist/icon.ico");
+    tray = new Tray(iconPath);
+    tray.setToolTip("MOCA · 예약 실행 중");
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: "MOCA 열기", click: () => { if (!mainWindow) createWindow(); mainWindow?.show(); mainWindow?.focus(); } },
+      { type: "separator" },
+      { label: "완전히 종료", click: () => { app.isQuitting = true; app.quit(); } },
+    ]));
+    tray.on("click", () => { if (!mainWindow) createWindow(); mainWindow?.show(); mainWindow?.focus(); });
+  } catch (e) {
+    console.warn("[tray] 아이콘 없음/생성 실패 → 트레이 생략(dev는 정상):", e instanceof Error ? e.message : e);
+  }
 }
 
 declare global { namespace Electron { interface App { isQuitting: boolean; } } }
@@ -439,8 +443,11 @@ app.on("second-instance", () => {
 app.whenReady().then(async () => {
   if (!ownsInstance) return;
   stripSelfQuarantine();          // ★ 봇 스폰 전에 반드시 먼저
-  await startBotServer();
-  startBotWatchdog();            // ★ 봇 서버 자동 감시·복구 시작
+  // dev(electron:dev)에선 concurrently가 봇(3383)을 따로 띄우므로 여기선 중복 스폰 안 함.
+  if (!isDev) {
+    await startBotServer();
+    startBotWatchdog();            // ★ 봇 서버 자동 감시·복구 시작
+  }
   createWindow();
   createTray();                  // 창을 닫아도 예약 실행은 트레이에서 계속
   ensureDisplayAwake();          // 퍼블리가 실행 중인 동안 예약 대기·작업 텀까지 화면 절전 방지

@@ -23,6 +23,7 @@ interface Props {
 export default function WriteTab({ selected, log }: Props) {
   const [keyInput, setKeyInput] = useState(getGeminiKey());
   const [keySaved, setKeySaved] = useState(!!getGeminiKey());
+  const [keyOpen, setKeyOpen] = useState(!getGeminiKey()); // 키 없으면 펼침, 있으면 접힘
   const [cafes, setCafes] = useState<MyCafe[]>([]);
   const [cafeId, setCafeId] = useState("");
   const [boards, setBoards] = useState<CafeBoard[]>([]);
@@ -39,6 +40,7 @@ export default function WriteTab({ selected, log }: Props) {
   function saveKey() {
     setGeminiKey(keyInput);
     setKeySaved(!!keyInput.trim());
+    if (keyInput.trim()) setKeyOpen(false); // 저장되면 접기
     log.push("Gemini API 키 저장됨", "info");
   }
 
@@ -100,14 +102,25 @@ export default function WriteTab({ selected, log }: Props) {
     <div style={{ maxWidth: 760 }}>
       <style>{`.moca-w-btn:hover{filter:brightness(1.12)} .moca-w-btn:active{transform:scale(.97)} .moca-in:focus{outline:none;border-color:var(--m-gold)}`}</style>
 
-      {/* AI 키 */}
-      <div style={card}>
-        <label style={stepLabel}>🤖 Gemini API 키 {keySaved && <span style={{ color: "var(--m-log-success)", fontSize: 12 }}>· ✅ 설정됨</span>}</label>
-        <p style={{ color: "var(--m-sub)", fontSize: 12, margin: "0 0 8px", lineHeight: 1.5 }}>AI 글 생성에 필요해요. 브라우저에만 저장되고 서버로 안 보내요.</p>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input className="moca-in" style={inputStyle} type="password" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder="AIza..." />
-          <button className="moca-w-btn" onClick={saveKey} style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 8, padding: "0 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>저장</button>
+      {/* AI 키 (접기/펴기) */}
+      <div style={{ ...card, paddingBottom: keyOpen ? 16 : 12 }}>
+        <div onClick={() => setKeyOpen((v) => !v)} style={{ display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none" }}>
+          <span style={{ color: "var(--m-text)", fontSize: 14, fontWeight: 800 }}>
+            🤖 Gemini API 키 {keySaved
+              ? <span style={{ color: "var(--m-log-success)", fontSize: 12, fontWeight: 600 }}>· ✅ 설정됨</span>
+              : <span style={{ color: "var(--m-log-warn)", fontSize: 12, fontWeight: 600 }}>· ⚠️ 미설정</span>}
+          </span>
+          <span style={{ marginLeft: "auto", color: "var(--m-sub)", fontSize: 13 }}>{keyOpen ? "▲ 접기" : "▼ 펴기"}</span>
         </div>
+        {keyOpen && (
+          <div style={{ marginTop: 12 }}>
+            <p style={{ color: "var(--m-sub)", fontSize: 12, margin: "0 0 8px", lineHeight: 1.5 }}>AI 글 생성에 필요해요. 브라우저에만 저장되고 서버로 안 보내요.</p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input className="moca-in" style={inputStyle} type="password" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder="AIza..." />
+              <button className="moca-w-btn" onClick={saveKey} style={{ background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 8, padding: "0 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>저장</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 선택 계정 */}
