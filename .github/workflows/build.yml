@@ -1,4 +1,4 @@
-name: Build Publy App
+name: Build MOCA App
 
 on:
   push:
@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
 
 # 같은 브랜치에서 새 버전이 올라오면 이전 설치 빌드를 중단한다.
-# stable 파일(Publy-Setup.exe / Publy-Mac-*.dmg)이 구버전으로 되돌아가는 것을 방지한다.
+# stable 파일(MOCA-Setup.exe / MOCA-Mac-*.dmg)이 구버전으로 되돌아가는 것을 방지한다.
 concurrency:
-  group: publy-desktop-${{ github.ref }}
+  group: moca-desktop-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -30,32 +30,8 @@ jobs:
         working-directory: naver-bot
         run: npx esbuild src/server.ts --bundle --platform=node --target=node20 --outfile=dist/server.js --external:playwright
 
-      - name: Install neighbor-bot dependencies
-        working-directory: neighbor-bot
-        run: npm install
-
-      - name: Bundle neighbor-bot (esbuild)
-        working-directory: neighbor-bot
-        run: npx esbuild src/server.ts --bundle --platform=node --target=node20 --outfile=dist/server.js --external:playwright
-        env:
-          NODE_PATH: ../naver-bot/node_modules
-
-      - name: Install insta-bot dependencies
-        working-directory: insta-bot
-        run: npm install
-
-      - name: Bundle insta-bot (esbuild)
-        working-directory: insta-bot
-        run: npx esbuild src/server.ts --bundle --platform=node --target=node20 --outfile=dist/server.js --external:playwright
-        env:
-          NODE_PATH: ../naver-bot/node_modules
-
       - name: Install Playwright Chromium (naver-bot)
         working-directory: naver-bot
-        run: npx playwright install chromium
-
-      - name: Install Playwright Chromium (neighbor-bot)
-        working-directory: neighbor-bot
         run: npx playwright install chromium
 
       - name: Copy Chromium to bundle path
@@ -87,18 +63,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 웹사이트/카톡 공유용 고정 다운로드 링크가 버전마다 안 깨지도록
-      # 버전 없는 이름(Publy-Setup.exe)으로 한 벌 복사 → 릴리스에 함께 업로드
-      - name: Make stable-named installer (Publy-Setup.exe)
+      # 버전 없는 이름(MOCA-Setup.exe)으로 한 벌 복사 → 릴리스에 함께 업로드
+      - name: Make stable-named installer (MOCA-Setup.exe)
         shell: pwsh
         run: |
-          $exe = Get-ChildItem release/*.exe | Where-Object { $_.Name -ne 'Publy-Setup.exe' } | Select-Object -First 1
-          Copy-Item $exe.FullName release/Publy-Setup.exe -Force
-          Write-Host "Stable installer: $($exe.Name) -> Publy-Setup.exe"
+          $exe = Get-ChildItem release/*.exe | Where-Object { $_.Name -ne 'MOCA-Setup.exe' } | Select-Object -First 1
+          Copy-Item $exe.FullName release/MOCA-Setup.exe -Force
+          Write-Host "Stable installer: $($exe.Name) -> MOCA-Setup.exe"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Publy-Windows
+          name: MOCA-Windows
           path: release/*.exe
           retention-days: 30
 
@@ -106,7 +82,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: Publy Latest
+          name: MOCA Latest
           files: release/*.exe
           prerelease: false
           make_latest: true
@@ -131,32 +107,8 @@ jobs:
         working-directory: naver-bot
         run: npx esbuild src/server.ts --bundle --platform=node --target=node20 --outfile=dist/server.js --external:playwright
 
-      - name: Install neighbor-bot dependencies
-        working-directory: neighbor-bot
-        run: npm install
-
-      - name: Bundle neighbor-bot (esbuild)
-        working-directory: neighbor-bot
-        run: npx esbuild src/server.ts --bundle --platform=node --target=node20 --outfile=dist/server.js --external:playwright
-        env:
-          NODE_PATH: ../naver-bot/node_modules
-
-      - name: Install insta-bot dependencies
-        working-directory: insta-bot
-        run: npm install
-
-      - name: Bundle insta-bot (esbuild)
-        working-directory: insta-bot
-        run: npx esbuild src/server.ts --bundle --platform=node --target=node20 --outfile=dist/server.js --external:playwright
-        env:
-          NODE_PATH: ../naver-bot/node_modules
-
       - name: Install Playwright Chromium (naver-bot)
         working-directory: naver-bot
-        run: npx playwright install chromium
-
-      - name: Install Playwright Chromium (neighbor-bot)
-        working-directory: neighbor-bot
         run: npx playwright install chromium
 
       - name: Copy Chromium to bundle path (macOS)
@@ -215,7 +167,7 @@ jobs:
             # 재시도 + 대기로 근본 방지한다.
             ok=""
             for attempt in 1 2 3 4 5; do
-              if hdiutil create -volname "Publy" -srcfolder "$stage" -ov -format UDZO "$dmg"; then
+              if hdiutil create -volname "MOCA" -srcfolder "$stage" -ov -format UDZO "$dmg"; then
                 ok="1"; break
               fi
               echo "hdiutil create failed (attempt $attempt) → 정리 후 재시도"
@@ -245,14 +197,14 @@ jobs:
           done
           # 4) 웹/공유용 고정 다운로드 링크가 버전마다 안 깨지게 버전없는 이름으로 복사
           arm=$(ls release/*-arm64.dmg 2>/dev/null | head -1)
-          intel=$(ls release/*.dmg 2>/dev/null | grep -v -- '-arm64.dmg' | grep -v 'Publy-Mac-' | head -1)
-          [ -n "$arm" ] && cp "$arm" release/Publy-Mac-AppleSilicon.dmg && echo "stable arm: $arm -> Publy-Mac-AppleSilicon.dmg"
-          [ -n "$intel" ] && cp "$intel" release/Publy-Mac-Intel.dmg && echo "stable intel: $intel -> Publy-Mac-Intel.dmg"
+          intel=$(ls release/*.dmg 2>/dev/null | grep -v -- '-arm64.dmg' | grep -v 'MOCA-Mac-' | head -1)
+          [ -n "$arm" ] && cp "$arm" release/MOCA-Mac-AppleSilicon.dmg && echo "stable arm: $arm -> MOCA-Mac-AppleSilicon.dmg"
+          [ -n "$intel" ] && cp "$intel" release/MOCA-Mac-Intel.dmg && echo "stable intel: $intel -> MOCA-Mac-Intel.dmg"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Publy-Mac
+          name: MOCA-Mac
           path: release/*.dmg
           retention-days: 30
 
@@ -260,7 +212,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: Publy Latest
+          name: MOCA Latest
           files: release/*.dmg
           prerelease: false
           make_latest: true
