@@ -27,10 +27,11 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [keyInput, setKeyInput] = useState(getGeminiKey());
   const [keySaved, setKeySaved] = useState(!!getGeminiKey());
   const [keyOpen, setKeyOpen] = useState(!getGeminiKey()); // 키 없으면 펼침, 있으면 접힘
-  const [cafes, setCafes] = useState<MyCafe[]>([]);
-  const [cafeId, setCafeId] = useState("");
-  const [boards, setBoards] = useState<CafeBoard[]>([]);
-  const [menuId, setMenuId] = useState("");
+  // 불러온 카페/게시판·선택값은 localStorage 영속(탭 이동·앱 재시작에도 유지, 다시 안 불러와도 됨)
+  const [cafes, setCafes] = useState<MyCafe[]>(() => { try { return JSON.parse(localStorage.getItem("moca_cafes") || "[]"); } catch { return []; } });
+  const [cafeId, setCafeId] = useState(() => localStorage.getItem("moca_cafeId") || "");
+  const [boards, setBoards] = useState<CafeBoard[]>(() => { try { return JSON.parse(localStorage.getItem("moca_boards") || "[]"); } catch { return []; } });
+  const [menuId, setMenuId] = useState(() => localStorage.getItem("moca_menuId") || "");
   const [keyword, setKeyword] = useState("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");   // 본문(이미지는 이 안에서 끝남)
@@ -93,7 +94,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     try {
       const res = await botFetch(`${BOT_BASE}/api/cafe/my/${accId}`);
       const d = await res.json();
-      if (d.cafes?.length) { setCafes(d.cafes); log.push(`카페 ${d.cafes.length}개 불러옴`, "success"); }
+      if (d.cafes?.length) { setCafes(d.cafes); localStorage.setItem("moca_cafes", JSON.stringify(d.cafes)); log.push(`카페 ${d.cafes.length}개 불러옴`, "success"); }
       else log.push(`카페 없음/실패: ${d.error || "빈 목록"}`, d.error ? "error" : "warn");
     } catch (e: any) {
       log.push(`봇 연결 실패: ${e?.message || e} (데스크톱 앱에서 실행 필요)`, "error");
@@ -111,7 +112,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
         body: JSON.stringify({ userId: accId, cafeId }),
       });
       const d = await res.json();
-      if (d.boards?.length) { setBoards(d.boards); log.push(`게시판 ${d.boards.length}개 불러옴`, "success"); }
+      if (d.boards?.length) { setBoards(d.boards); localStorage.setItem("moca_boards", JSON.stringify(d.boards)); log.push(`게시판 ${d.boards.length}개 불러옴`, "success"); }
       else log.push(`게시판 없음/실패: ${d.error || "빈 목록"}`, d.error ? "error" : "warn");
     } catch (e: any) {
       log.push(`봇 연결 실패: ${e?.message || e} (데스크톱 앱에서 실행 필요)`, "error");
@@ -317,7 +318,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       <div style={card}>
         <label style={stepLabel}>① 카페 선택</label>
         <div style={{ display: "flex", gap: 8 }}>
-          <select className="moca-in" style={{ ...inputStyle, flex: 1 }} value={cafeId} onChange={(e) => { setCafeId(e.target.value); setBoards([]); setMenuId(""); }}>
+          <select className="moca-in" style={{ ...inputStyle, flex: 1 }} value={cafeId} onChange={(e) => { setCafeId(e.target.value); localStorage.setItem("moca_cafeId", e.target.value); setBoards([]); setMenuId(""); localStorage.removeItem("moca_boards"); localStorage.removeItem("moca_menuId"); }}>
             <option value="">{cafes.length ? "카페를 선택하세요" : "먼저 불러오기 →"}</option>
             {cafes.map((c) => <option key={c.cafeId} value={c.cafeId}>{c.name}</option>)}
           </select>
@@ -329,7 +330,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       <div style={card}>
         <label style={stepLabel}>② 게시판(카테고리) 선택</label>
         <div style={{ display: "flex", gap: 8 }}>
-          <select className="moca-in" style={{ ...inputStyle, flex: 1 }} value={menuId} onChange={(e) => setMenuId(e.target.value)}>
+          <select className="moca-in" style={{ ...inputStyle, flex: 1 }} value={menuId} onChange={(e) => { setMenuId(e.target.value); localStorage.setItem("moca_menuId", e.target.value); }}>
             <option value="">{boards.length ? "게시판을 선택하세요" : "카페 선택 후 불러오기 →"}</option>
             {boards.map((b) => <option key={b.menuId} value={b.menuId}>{b.name}</option>)}
           </select>
