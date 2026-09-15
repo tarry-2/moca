@@ -367,7 +367,7 @@ async function startBotServer() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1400, height: 900, minWidth: 380, minHeight: 600,
+    width: 960, height: 720, minWidth: 360, minHeight: 560,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     backgroundColor: "#02040a",
     webPreferences: {
