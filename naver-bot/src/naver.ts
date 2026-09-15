@@ -1318,14 +1318,16 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
       await typeText(para);
       if (isPartnerCardPara(para)) { onLog(`[cafe] 🤝 온파트너 상품카드 입력 → OG 카드 임베드 대기…`); await page.waitForTimeout(3500).catch(() => {}); }
     };
+    // 문단 사이 여백 — 모바일 가독성 위해 빈 줄 2개(Enter 3번). PC는 넓어 괜찮지만 모바일에서 글이 붙어보이는 것 방지.
+    const paraBreak = async () => { await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); };
     if (imgFiles.length) {
       // 1) 썸네일(첫 이미지) 맨 위
       await uploadImages([imgFiles[0]]);
       await page.keyboard.press("Enter").catch(() => {});
       // 2) 제휴 안내 문구(온파트너 상품 있을 때, 썸네일 다음·인사말 앞)
-      if (partnerList.length) { await typeText(ONPARTNER_DISCLOSURE); await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); }
+      if (partnerList.length) { await typeText(ONPARTNER_DISCLOSURE); await paraBreak(); }
       // 3) 인사말
-      if (greetPara) { await typeText(greetPara); await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); }
+      if (greetPara) { await typeText(greetPara); await paraBreak(); }
       // 4) 인사말 다음엔 '글 먼저' 나오고, 그 뒤부터 [이미지 → 글] 반복. 이미지 간격은 '본문 실제 문단'(카드 제외) 기준.
       const rest = imgFiles.slice(1);
       const contentParaCount = allParas.filter(p => !isPartnerCardPara(p)).length;
@@ -1343,18 +1345,16 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
           cIdx++;
         }
         await typeParaWithCard(para);
-        await page.keyboard.press("Enter").catch(() => {});
-        await page.keyboard.press("Enter").catch(() => {});
+        await paraBreak();
       }
       while (imgIdx < rest.length) { await uploadImages([rest[imgIdx++]]); await page.keyboard.press("Enter").catch(() => {}); }
     } else {
       // 이미지 없음: 제휴문구 → 인사말 → 본문 문단(카드 포함) 순차
-      if (partnerList.length) { await typeText(ONPARTNER_DISCLOSURE); await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); }
-      if (greetPara) { await typeText(greetPara); await page.keyboard.press("Enter").catch(() => {}); await page.keyboard.press("Enter").catch(() => {}); }
+      if (partnerList.length) { await typeText(ONPARTNER_DISCLOSURE); await paraBreak(); }
+      if (greetPara) { await typeText(greetPara); await paraBreak(); }
       for (let p = 0; p < allParas.length; p++) {
         await typeParaWithCard(allParas[p]);
-        await page.keyboard.press("Enter").catch(() => {});
-        await page.keyboard.press("Enter").catch(() => {});
+        await paraBreak();
       }
     }
     await page.waitForTimeout(400);
