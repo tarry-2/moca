@@ -31,6 +31,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [keyInput, setKeyInput] = useState(getGeminiKey());
   const [keySaved, setKeySaved] = useState(!!getGeminiKey());
   const [keyOpen, setKeyOpen] = useState(!getGeminiKey()); // 키 없으면 펼침, 있으면 접힘
+  const [showKey, setShowKey] = useState(false); // 🔑 키 미리보기(눈) 토글
   // 불러온 카페/게시판·선택값은 localStorage 영속(탭 이동·앱 재시작에도 유지, 다시 안 불러와도 됨)
   const [cafes, setCafes] = useState<MyCafe[]>(() => { try { return JSON.parse(localStorage.getItem("moca_cafes") || "[]"); } catch { return []; } });
   const [cafeId, setCafeId] = useState(() => localStorage.getItem("moca_cafeId") || "");
@@ -373,7 +374,13 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
           <div style={{ marginTop: 12 }}>
             <p style={{ color: "var(--m-sub)", fontSize: 12, margin: "0 0 8px", lineHeight: 1.5 }}>AI 글 생성에 필요해요. 브라우저에만 저장되고 서버로 안 보내요.</p>
             <div style={{ display: "flex", gap: 8 }}>
-              <input className="moca-in" style={inputStyle} type="password" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder="AIza..." />
+              <div style={{ position: "relative", flex: 1 }}>
+                <input className="moca-in" style={{ ...inputStyle, paddingRight: 42 }} type={showKey ? "text" : "password"} value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder="AIza..." />
+                <button type="button" onClick={() => setShowKey((v) => !v)} title={showKey ? "숨기기" : "보기"}
+                  style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 17, padding: "4px 6px", lineHeight: 1 }}>
+                  {showKey ? "🙈" : "👁️"}
+                </button>
+              </div>
               <button className="moca-w-btn" onClick={saveKey} style={{ background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 8, padding: "0 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>저장</button>
             </div>
           </div>
