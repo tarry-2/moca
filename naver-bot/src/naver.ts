@@ -527,30 +527,30 @@ async function openAnonCafeContext(headed = false, proxySessid?: string) {
 }
 
 // 카페 주소(vanity/숫자/전체 URL) → 숫자 cafeId 해석(비로그인). 예: cafe.naver.com/steamindiegame → 27842958
-export async function resolveCafeId(cafeAddress: string, onLog: (m: string) => void = console.log): Promise<{ cafeId: string; cafeUrl: string }> {
+export async function resolveCafeId(cafeAddress: string, onLog: (m: string) => void = console.log): Promise<{ cafeId: string; cafeUrl: string; cafeName: string }> {
   let addr = (cafeAddress || "").trim();
-  if (/^\d+$/.test(addr)) return { cafeId: addr, cafeUrl: "" };
-  if (!/^https?:\/\//.test(addr)) addr = "https://cafe.naver.com/" + addr.replace(/^\/+/, "");
-  // 이미 ca-fe/cafes/{id} 형태면 바로 추출
-  const m0 = addr.match(/cafes\/(\d+)/); if (m0) return { cafeId: m0[1], cafeUrl: addr };
-  const vanity = (addr.match(/cafe\.naver\.com\/([^/?#]+)/) || [])[1] || "";
+  const vanity = (addr.match(/cafe\.naver\.com\/([^/?#]+)/) || [])[1] || (/^https?:/.test(addr) ? "" : addr.replace(/^\/+/, "").split(/[/?#]/)[0]);
+  if (!/^https?:\/\//.test(addr) && !/^\d+$/.test(addr)) addr = "https://cafe.naver.com/" + addr.replace(/^\/+/, "");
   const { browser, page } = await openAnonCafeContext();
   try {
     onLog(`[유입] 카페 주소 해석: ${addr}`);
-    await page.goto(addr, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.goto(/^\d+$/.test(addr) ? `https://cafe.naver.com/ca-fe/cafes/${addr}` : addr, { waitUntil: "domcontentloaded", timeout: 30000 });
     await page.waitForTimeout(2500);
-    // 페이지 전역/스크립트에서 clubId 추출
-    const cid = await page.evaluate(() => {
+    // clubId + 카페 이름 추출(전역·메타·title)
+    const info = await page.evaluate(() => {
       const w: any = window;
-      if (w.g_sClubId) return String(w.g_sClubId);
       const html = document.documentElement.innerHTML;
-      const m = html.match(/clubid[=:"']+(\d{5,})/i) || html.match(/cafeId["':=]+(\d{5,})/i) || html.match(/cafes\/(\d{5,})/);
-      return m ? m[1] : "";
-    }).catch(() => "");
+      const cid = w.g_sClubId ? String(w.g_sClubId) : (html.match(/clubid[=:"']+(\d{5,})/i) || html.match(/cafeId["':=]+(\d{5,})/i) || html.match(/cafes\/(\d{5,})/) || [])[1] || "";
+      const name = w.g_sCafeName || (document.querySelector('meta[property="og:title"]') as HTMLMetaElement)?.content || document.title.replace(/\s*:\s*네이버.*$/, "").trim() || "";
+      return { cid, name: String(name).trim().slice(0, 60) };
+    }).catch(() => ({ cid: "", name: "" }));
+    const m0 = addr.match(/cafes\/(\d+)/);
+    const cid = info.cid || (m0 ? m0[1] : "") || (/^\d+$/.test(addr) ? addr : "");
     await browser.close();
     if (!cid) throw new Error(`카페 ID를 못 찾음(비공개 카페면 로그인 모드로): ${addr}`);
-    onLog(`[유입] ✅ cafeId=${cid} (${vanity})`);
-    return { cafeId: cid, cafeUrl: addr };
+    const cafeName = info.name || vanity || cid;
+    onLog(`[유입] ✅ 카페: ${cafeName} (cafeId=${cid})`);
+    return { cafeId: cid, cafeUrl: addr, cafeName };
   } catch (e) { await browser.close().catch(() => {}); throw e; }
 }
 
@@ -779,16 +779,33 @@ export async function crawlCafeArticles(userId: string | undefined, cafeId: stri
     const listUrl = `https://cafe.naver.com/ca-fe/cafes/${cafeId}/menus/${menuId || "0"}?viewType=L`;
     onLog(`[유입] 📰 ${userId ? "로그인" : "비로그인"} 글목록 열기: ${listUrl}`);
     await page.goto(listUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(3500);
     const pages = Math.max(1, opts.maxPages || 3);
-    for (let i = 0; i < pages; i++) { await page.mouse.wheel(0, 3000).catch(() => {}); await page.waitForTimeout(1500); }
-    // 1차: API 응답 파싱, 2차: DOM 스크랩(둘 합침)
+    for (let i = 0; i < pages; i++) { await page.mouse.wheel(0, 3000).catch(() => {}); await page.waitForTimeout(1200); }
+    // ★1차: 카페 글목록 공개 API를 페이지 컨텍스트에서 직접 fetch(가장 확실). menuid=0=전체글.
+    //   getCafeBoards의 SideMenuList와 같은 방식(브라우저 세션·쿠키로 apis.naver.com 호출).
+    let fromApiDirect: CafeArticle[] = [];
+    try {
+      const apiRes: any = await page.evaluate(async ({ cid, mid, per }) => {
+        const tries = [
+          `https://apis.naver.com/cafe-web/cafe2/ArticleListV2dot1.json?search.clubid=${cid}&search.queryType=lastArticle&search.menuid=${mid}&search.page=1&search.perPage=${per}`,
+          `https://apis.naver.com/cafe-web/cafe2/ArticleList.json?search.clubid=${cid}&search.queryType=lastArticle&search.menuid=${mid}&search.page=1&search.perPage=${per}`,
+        ];
+        for (const url of tries) {
+          try { const r = await fetch(url, { headers: { Accept: "application/json" }, credentials: "include" }); if (!r.ok) continue; return { url, json: await r.json() }; } catch { /* next */ }
+        }
+        return { error: "ArticleList API 후보 전부 실패" };
+      }, { cid: cafeId, mid: menuId || "0", per: 50 });
+      if (apiRes?.json) { fromApiDirect = parseCafeArticles([{ url: apiRes.url, j: apiRes.json }], cafeId); onLog(`[유입] 직접 API(${(apiRes.url || "").split("?")[0].split("/").pop()}) 글 ${fromApiDirect.length}개`); }
+      else onLog(`[유입] 직접 API 실패: ${apiRes?.error || "?"}`);
+    } catch (e: any) { onLog(`[유입] 직접 API 예외: ${String(e?.message || e).slice(0, 60)}`); }
+    // 2차: 가로챈 응답 파싱, 3차: DOM 스크랩 — 셋 합침
     const fromApi = parseCafeArticles(captured, cafeId);
     const fromDom = await scrapeDom();
     const merged: Record<string, CafeArticle> = {};
-    for (const a of [...fromApi, ...fromDom]) if (a.articleId && !merged[a.articleId]) merged[a.articleId] = a;
+    for (const a of [...fromApiDirect, ...fromApi, ...fromDom]) if (a.articleId && !merged[a.articleId]) merged[a.articleId] = a;
     const arts = Object.values(merged);
-    onLog(`[유입] 글 ${arts.length}개 (API ${fromApi.length} + DOM ${fromDom.length}) · 캡처응답 ${captured.length}건`);
+    onLog(`[유입] 글 ${arts.length}개 (직접API ${fromApiDirect.length} + 가로챔 ${fromApi.length} + DOM ${fromDom.length}) · 캡처응답 ${captured.length}건`);
     if (!arts.length) {
       const curUrl = page.url();
       const diagCap = captured.map((c) => c.url.split("?")[0]).slice(0, 8).join(" ");

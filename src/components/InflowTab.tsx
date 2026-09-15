@@ -58,6 +58,7 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
 
   // ── 모드1(빠른유입) 상태 ──
   const [quickCafeAddr, setQuickCafeAddr] = useState(() => localStorage.getItem("moca_inflow_quick_addr") || "");
+  const [quickCafeName, setQuickCafeName] = useState("");
   const [randomCount, setRandomCount] = useState(10); // 랜덤 방문할 글 개수
   const [focusLinks, setFocusLinks] = useState("");   // 집중 유입할 글 링크(줄바꿈)
 
@@ -143,7 +144,8 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
       const rr = await botFetch(`${BOT_BASE}/api/cafe/resolve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cafeAddress: addr }) });
       const rd = await rr.json();
       if (!rd.cafeId) throw new Error(rd.error || "카페 ID를 못 찾음");
-      log.push(`✅ 카페 확인: ${rd.cafeId}. 글 목록 불러오는 중${accId ? "(로그인 크롤)" : "(비로그인)"}…`, "progress");
+      setQuickCafeName(rd.cafeName || "");
+      log.push(`✅ 카페 확인: ${rd.cafeName || rd.cafeId} (ID ${rd.cafeId}). 글 목록 불러오는 중${accId ? "(로그인 크롤)" : "(비로그인)"}…`, "progress");
       // 크롤은 계정 있으면 로그인(비공개·전체글 안정), 방문은 어차피 비로그인. 트래픽 방식과 동일.
       const cr = await botFetch(`${BOT_BASE}/api/cafe/articles`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: accId || undefined, cafeId: rd.cafeId, cafeUrl: rd.cafeUrl, maxPages: 4 }) });
       const cd = await cr.json();
@@ -269,6 +271,7 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
               <input className="moca-in" style={{ ...inputStyle, flex: 1 }} value={quickCafeAddr} onChange={(e) => setQuickCafeAddr(e.target.value)} placeholder="cafe.naver.com/카페주소 또는 전체 URL" />
               <div><input type="number" min={1} max={50} className="moca-in" style={{ ...inputStyle, width: 90 }} value={randomCount} onChange={(e) => setRandomCount(Math.max(1, Number(e.target.value) || 10))} title="랜덤 방문할 글 수" /></div>
             </div>
+            {quickCafeName && <div style={{ color: "var(--m-log-success)", fontSize: 12.5, marginBottom: 8 }}>☕ 카페: <b>{quickCafeName}</b></div>}
             <button className="moca-w-btn" onClick={startRandom} disabled={running || busy === "resolve"} style={{ width: "100%", background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 8, padding: "12px", fontSize: 14, fontWeight: 800, cursor: "pointer", opacity: running || busy ? 0.6 : 1 }}>
               {busy === "resolve" ? "카페 확인 중…" : `🎲 랜덤 ${randomCount}개 글 유입 시작`}
             </button>
