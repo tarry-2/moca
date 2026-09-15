@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards, publishCafe, crawlCafeArticles, cafeInflow } from "./naver";
+import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards, publishCafe, crawlCafeArticles, cafeInflow, resolveCafeId } from "./naver";
 import { saveTistorySession, publishTistory, tistorySessionExists, deleteTistorySession } from "./tistory";
 import { fetchPendingJobs, updateJob, claimPendingJob, finishQueuedHistory, useQuota, refundQuota, checkPublishEntitlement, incrementDailyPublish } from "./supabase";
 import { acquireAccountLock } from "./account-lock";
@@ -185,15 +185,26 @@ app.post("/api/cafe/cancel", async (_req, res) => {
   res.json({ ok: true, closed: n });
 });
 
-/* ── 📈 카페 유입: 게시판 글 크롤(링크 수집) ── */
+/* ── 📈 카페 주소 → cafeId 해석(비로그인) ── */
+app.post("/api/cafe/resolve", async (req, res) => {
+  const finishWork = beginWork();
+  try {
+    const { cafeAddress } = req.body || {};
+    if (!cafeAddress) return res.status(400).json({ error: "cafeAddress 필요" });
+    try { res.json(await resolveCafeId(String(cafeAddress))); }
+    catch (e: any) { res.status(500).json({ error: e.message }); }
+  } finally { finishWork(); }
+});
+
+/* ── 📈 카페 유입: 글 크롤(링크 수집). userId 있으면 로그인(카테고리·비공개), 없으면 비로그인(공개) ── */
 app.post("/api/cafe/articles", async (req, res) => {
   const finishWork = beginWork();
   try {
     const { userId, cafeId, cafeUrl, menuId, maxPages } = req.body || {};
-    if (!userId || !cafeId || !menuId) return res.status(400).json({ error: "userId, cafeId, menuId 필요", articles: [] });
+    if (!cafeId) return res.status(400).json({ error: "cafeId 필요", articles: [] });
     const logs: string[] = [];
     try {
-      const articles = await crawlCafeArticles(userId, cafeId, cafeUrl || "", menuId, { maxPages: Number(maxPages) || 3 }, (m) => { logs.push(m); console.log(m); });
+      const articles = await crawlCafeArticles(userId || undefined, cafeId, cafeUrl || "", menuId || undefined, { maxPages: Number(maxPages) || 3 }, (m) => { logs.push(m); console.log(m); });
       res.json({ articles, logs });
     } catch (e: any) {
       res.status(500).json({ error: e.message, articles: [], logs });
@@ -214,21 +225,22 @@ app.post("/api/cafe/inflow-cancel", async (_req, res) => {
 });
 app.post("/api/cafe/inflow", async (req, res) => {
   const finishWork = beginWork();
-  const { userId, cafeId, cafeUrl, articles, dwellSec, repeat, showWindow } = req.body || {};
+  const { cafeId, cafeUrl, articles, dwellSec, repeat, randomOrder, showWindow } = req.body || {};
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   (res as any).flushHeaders?.();
   const send = (o: object) => { try { res.write(`data: ${JSON.stringify(o)}\n\n`); } catch {} };
-  if (!userId || !cafeId || !Array.isArray(articles) || !articles.length) {
-    send({ type: "done", success: false, error: "userId, cafeId, articles 필요" });
+  if (!Array.isArray(articles) || !articles.length) {
+    send({ type: "done", success: false, error: "articles 필요(방문할 글 링크)" });
     res.end(); finishWork(); return;
   }
   inflowCancelled = false;
   try {
     const r = await cafeInflow({
-      userId, cafeId, cafeUrl,
+      cafeId, cafeUrl,
       articles, dwellSec: Number(dwellSec) || 35, repeat: Number(repeat) || 1,
+      randomOrder: randomOrder === true || randomOrder === "true",
       showWindow: showWindow === true || showWindow === "true",
       onLog: (m) => { console.log(m); send({ type: "log", msg: m }); },
       onProgress: (done, total) => send({ type: "progress", done, total }),

@@ -480,6 +480,43 @@ async function openCafeContext(userId: string, headed = false) {
   return { browser, page };
 }
 
+// 🔓 비로그인(익명) 카페 컨텍스트 — 유입(조회수)은 실제 익명 방문자처럼. 계정 로그인 안 하므로 보호조치 위험 없음.
+async function openAnonCafeContext(headed = false) {
+  const browser = await chromium.launch({ headless: !headed, args: headed ? [...LAUNCH_ARGS, "--start-maximized"] : LAUNCH_ARGS });
+  const context = await browser.newContext({ userAgent: UA, viewport: { width: 1280, height: 800 }, locale: "ko-KR", timezoneId: "Asia/Seoul" });
+  await applyAntiDetection(context);
+  const page = await context.newPage();
+  return { browser, page };
+}
+
+// 카페 주소(vanity/숫자/전체 URL) → 숫자 cafeId 해석(비로그인). 예: cafe.naver.com/steamindiegame → 27842958
+export async function resolveCafeId(cafeAddress: string, onLog: (m: string) => void = console.log): Promise<{ cafeId: string; cafeUrl: string }> {
+  let addr = (cafeAddress || "").trim();
+  if (/^\d+$/.test(addr)) return { cafeId: addr, cafeUrl: "" };
+  if (!/^https?:\/\//.test(addr)) addr = "https://cafe.naver.com/" + addr.replace(/^\/+/, "");
+  // 이미 ca-fe/cafes/{id} 형태면 바로 추출
+  const m0 = addr.match(/cafes\/(\d+)/); if (m0) return { cafeId: m0[1], cafeUrl: addr };
+  const vanity = (addr.match(/cafe\.naver\.com\/([^/?#]+)/) || [])[1] || "";
+  const { browser, page } = await openAnonCafeContext();
+  try {
+    onLog(`[유입] 카페 주소 해석: ${addr}`);
+    await page.goto(addr, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(2500);
+    // 페이지 전역/스크립트에서 clubId 추출
+    const cid = await page.evaluate(() => {
+      const w: any = window;
+      if (w.g_sClubId) return String(w.g_sClubId);
+      const html = document.documentElement.innerHTML;
+      const m = html.match(/clubid[=:"']+(\d{5,})/i) || html.match(/cafeId["':=]+(\d{5,})/i) || html.match(/cafes\/(\d{5,})/);
+      return m ? m[1] : "";
+    }).catch(() => "");
+    await browser.close();
+    if (!cid) throw new Error(`카페 ID를 못 찾음(비공개 카페면 로그인 모드로): ${addr}`);
+    onLog(`[유입] ✅ cafeId=${cid} (${vanity})`);
+    return { cafeId: cid, cafeUrl: addr };
+  } catch (e) { await browser.close().catch(() => {}); throw e; }
+}
+
 // 응답에서 카페 배열을 최대한 유연하게 찾아 파싱(구조가 버전마다 달라서 재귀 탐색).
 function parseCafeArray(j: any): MyCafe[] {
   const out: MyCafe[] = [];
@@ -663,8 +700,9 @@ function parseCafeArticles(captured: { url: string; j: any }[], cafeId: string):
 }
 
 // ⑤⑥ 게시판 글 목록 크롤(링크 수집). getMyCafes와 동일하게 response 가로채기(직접 fetch는 401 잦음).
-export async function crawlCafeArticles(userId: string, cafeId: string, _cafeUrl: string, menuId: string, opts: { maxPages?: number }, onLog: (m: string) => void): Promise<CafeArticle[]> {
-  const { browser, page } = await openCafeContext(userId);
+//   userId 있으면 로그인(비공개 카페·카테고리), 없으면 비로그인(공개 카페). menuId 없으면 카페 전체 최근글.
+export async function crawlCafeArticles(userId: string | undefined, cafeId: string, cafeUrl: string, menuId: string | undefined, opts: { maxPages?: number }, onLog: (m: string) => void): Promise<CafeArticle[]> {
+  const { browser, page } = userId ? await openCafeContext(userId) : await openAnonCafeContext();
   const captured: { url: string; j: any }[] = [];
   page.on("response", async (res) => {
     try {
@@ -675,8 +713,11 @@ export async function crawlCafeArticles(userId: string, cafeId: string, _cafeUrl
     } catch { /* 파싱 실패 무시 */ }
   });
   try {
-    const listUrl = `https://cafe.naver.com/ca-fe/cafes/${cafeId}/menus/${menuId}`;
-    onLog(`[유입] 📰 게시판 글목록 열기: ${listUrl}`);
+    // menuId 있으면 그 게시판, 없으면 카페 전체글(ca-fe/…/articles 최근). 비로그인이면 공개글만 보임.
+    const listUrl = menuId
+      ? `https://cafe.naver.com/ca-fe/cafes/${cafeId}/menus/${menuId}`
+      : `https://cafe.naver.com/ca-fe/cafes/${cafeId}`;
+    onLog(`[유입] 📰 ${userId ? "로그인" : "비로그인"} 글목록 열기: ${listUrl}`);
     await page.goto(listUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     await page.waitForTimeout(3500);
     const pages = Math.max(1, opts.maxPages || 3);
@@ -689,25 +730,28 @@ export async function crawlCafeArticles(userId: string, cafeId: string, _cafeUrl
   } catch (e) { await browser.close().catch(() => {}); throw e; }
 }
 
-// ⑦ 유입 실행 — 각 글을 세션 계정으로 방문·스크롤 체류(조회수). 발행과 독립 브라우저.
+// ⑦ 유입 실행 — 각 글을 🔓비로그인(익명)으로 방문·스크롤 체류(조회수). 계정 로그인 안 함 = 보호조치 위험 없음.
+//   randomOrder=true면 매 회차 순서를 섞어 자연스럽게(집중유입이 아니라 랜덤 분산일 때).
 export interface CafeInflowParams {
-  userId: string; cafeId: string; cafeUrl?: string;
+  cafeId?: string; cafeUrl?: string;
   articles: { articleId: string; subject: string; url: string }[];
-  dwellSec: number; repeat: number; showWindow?: boolean;
+  dwellSec: number; repeat: number; randomOrder?: boolean; showWindow?: boolean;
   onLog?: (m: string) => void;
   onProgress?: (done: number, total: number) => void;
   onBrowser?: (b: import("playwright").Browser) => void;
   isCancelled?: () => boolean;
 }
 export async function cafeInflow(p: CafeInflowParams): Promise<{ ok: number; total: number; viewed: number }> {
-  const { userId, articles, dwellSec, repeat, showWindow = false, onLog = console.log, onProgress, onBrowser, isCancelled } = p;
-  const { browser, page } = await openCafeContext(userId, showWindow);
+  const { articles, dwellSec, repeat, randomOrder = false, showWindow = false, onLog = console.log, onProgress, onBrowser, isCancelled } = p;
+  const { browser, page } = await openAnonCafeContext(showWindow); // 🔓 비로그인 익명 방문
   onBrowser?.(browser);
+  onLog("[유입] 🔓 비로그인(익명)으로 방문해요 — 계정 로그인 안 하니 보호조치 위험 없어요");
   const total = articles.length * Math.max(1, repeat);
   let done = 0, viewed = 0;
   try {
     for (let r = 0; r < Math.max(1, repeat); r++) {
-      for (const a of articles) {
+      const order = randomOrder ? [...articles].sort(() => Math.random() - 0.5) : articles;
+      for (const a of order) {
         if (isCancelled?.()) { onLog("[유입] 🛑 취소됨 — 중단"); await browser.close().catch(() => {}); return { ok: viewed, total, viewed }; }
         onLog(`[유입] (${done + 1}/${total}) 방문: ${a.subject.slice(0, 30)}`);
         try {
