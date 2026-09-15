@@ -515,6 +515,19 @@ export async function checkProxy(sessid?: string): Promise<{ ok: boolean; ip?: s
   }
 }
 
+// 카페 브라우저 강제 닫기 — 네이버 글쓰기 beforeunload 다이얼로그가 close를 막는 걸 우회.
+async function closeCafeBrowserHard(browser: import("playwright").Browser) {
+  try {
+    for (const ctx of browser.contexts()) {
+      for (const pg of ctx.pages()) {
+        try { await pg.evaluate(() => { (window as any).onbeforeunload = null; }).catch(() => {}); } catch {}
+        try { await pg.close({ runBeforeUnload: false }); } catch {}
+      }
+    }
+  } catch {}
+  try { await browser.close(); } catch {}
+}
+
 // 🔓 비로그인(익명) 카페 컨텍스트 — 유입(조회수)은 실제 익명 방문자처럼. 계정 로그인 안 하므로 보호조치 위험 없음.
 //   proxySessid 주면 DataImpulse 프록시로 나감(IP 분산/고정). 없으면 로컬 IP.
 async function openAnonCafeContext(headed = false, proxySessid?: string) {
@@ -1455,12 +1468,15 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     }
     await shot(draftOnly ? "임시등록 완료" : "발행 완료").catch(() => {});
 
-    try { await browser.close(); } catch {}
+    // ★발행 후 카페 창 확실히 닫기 — 네이버 글쓰기 페이지의 beforeunload("작성 중 나가기") 다이얼로그가
+    //   browser.close()를 막아 창이 떠 있던 문제. onbeforeunload 제거 + runBeforeUnload:false로 강제 닫기.
+    onLog(`[cafe] 🚪 발행 완료 — 카페 창 닫는 중…`);
+    await closeCafeBrowserHard(browser);
     return { url: finalUrl || "완료(페이지 닫힘=등록됨)" };
   } catch (e) {
     onLog(`[cafe] ❌ 발행 오류: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`);
     await shot("오류 발생 시점").catch(() => {});
-    await browser.close().catch(() => {});
+    await closeCafeBrowserHard(browser);
     throw e;
   }
 }
