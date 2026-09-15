@@ -31,9 +31,15 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
   const [dwellSec, setDwellSec] = useState(35);   // 각 글 체류(초)
   const [repeat, setRepeat] = useState(1);        // 각 글 반복 방문
   const [busy, setBusy] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
+  const [runState, setRunState] = useState<"idle" | "running" | "paused">("idle");
+  const running = runState === "running";
   const [prog, setProg] = useState({ done: 0, total: 0 });
   const streamRef = useRef<BotEventStream | null>(null);
+  // 정지/이어가기용: 진행 중 payload·방문한 글들·마지막 라벨 기억
+  const lastPayloadRef = useRef<any>(null);
+  const activeArticlesRef = useRef<{ articleId: string; subject: string; url: string }[]>([]);
+  const doneRef = useRef(0);
+  const lastLabelRef = useRef("");
   // 🌐 프록시(DataImpulse) — 유입 IP 분산/고정. 연결되면 초록불 깜빡.
   const [useProxy, setUseProxy] = useState(() => localStorage.getItem("moca_inflow_proxy") === "1");
   const [proxyState, setProxyState] = useState<"off" | "checking" | "on" | "fail">("off");
@@ -89,11 +95,14 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
     return { fromMs: Date.now() - p.days * 86400000, toMs: Date.now() };
   }
 
-  // 공통: 유입 SSE 실행
-  function runInflow(payload: object, label: string) {
+  // 공통: 유입 SSE 실행. articles를 기억해 정지 후 '이어가기'로 남은 글부터 재개.
+  function runInflow(payload: any, label: string, resume = false) {
     if (running) return;
-    setRunning(true); setProg({ done: 0, total: 0 });
-    log.push(`━━ 🚦 유입 시작: ${label} ━━`, "sys");
+    const articles = payload.articles || [];
+    lastPayloadRef.current = payload; lastLabelRef.current = label;
+    activeArticlesRef.current = articles; doneRef.current = 0;
+    setRunState("running"); setProg({ done: 0, total: articles.length * Math.max(1, repeat) });
+    log.push(`━━ 🚦 유입 ${resume ? "이어가기" : "시작"}: ${label} ━━`, "sys");
     log.push(`창보기 ${showWindow ? "ON(크롬 창 뜸)" : "OFF(백그라운드)"} · 글당 체류 ${dwellSec}초 · 반복 ${repeat}회 · 프록시 ${useProxy ? "ON" : "OFF"}`, "progress");
     const withProxy = { ...payload, useProxy, proxySessid: proxySessidRef.current };
     const es = new BotEventStream(`${BOT_BASE}/api/cafe/inflow`, {
@@ -107,21 +116,39 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
         const type = m.includes("⚠️") ? "warn" : (m.includes("실패") || m.includes("오류") || m.includes("❌")) ? "error" : (m.includes("✅") || m.includes("🎉")) ? "success" : "info";
         log.push(m, type);
       } else if (d.type === "shot") { log.shot(d.caption, d.dataUrl); }
-      else if (d.type === "progress") { setProg({ done: d.done, total: d.total }); }
+      else if (d.type === "progress") { doneRef.current = d.done; setProg({ done: d.done, total: d.total }); }
       else if (d.type === "done") {
         log.push(d.success ? `🎉 유입 완료: 조회 ${d.viewed}회 (${d.ok}/${d.total})` : `유입 종료: ${d.error || "중단"}`, d.success ? "success" : "warn");
-        es.close(); streamRef.current = null; setRunning(false);
+        es.close(); streamRef.current = null; setRunState("idle");
       }
     };
-    es.onerror = () => { log.push("봇 연결 오류 (데스크톱 앱에서 실행 필요)", "error"); streamRef.current = null; setRunning(false); };
-    es.onclose = () => { setRunning((r) => (r ? false : r)); };
+    es.onerror = () => { log.push("봇 연결 오류 (데스크톱 앱에서 실행 필요)", "error"); streamRef.current = null; setRunState("idle"); };
+    es.onclose = () => { setRunState((s) => (s === "running" ? "idle" : s)); };
   }
 
-  function stopInflow() {
+  // ⏸ 정지 — 봇 중단 + 아직 방문 안 한 글 기억(이어가기용)
+  function pauseInflow() {
     streamRef.current?.close(); streamRef.current = null;
     botFetch(`${BOT_BASE}/api/cafe/inflow-cancel`, { method: "POST" }).catch(() => {});
-    setRunning(false);
-    log.push("🛑 유입 중단됨", "warn");
+    const arts = activeArticlesRef.current;
+    const visitedInRound = arts.length ? doneRef.current % arts.length : 0; // 이번 회차에서 방문한 글 수
+    const remain = arts.slice(visitedInRound);
+    activeArticlesRef.current = remain.length ? remain : arts; // 다 돌았으면 전체 재방문
+    setRunState("paused");
+    log.push(`⏸ 정지 — ${doneRef.current}개 방문 후 멈춤 (이어가기하면 남은 ${activeArticlesRef.current.length}개부터)`, "warn");
+  }
+  // ⏭ 이어가기 — 남은 글부터 다시(반복 1회 기준)
+  function resumeInflow() {
+    if (!lastPayloadRef.current) { log.push("이어갈 유입이 없어요", "warn"); return; }
+    runInflow({ ...lastPayloadRef.current, articles: activeArticlesRef.current }, lastLabelRef.current, true);
+  }
+  // 🛑 취소 — 완전 중단·초기화
+  function cancelInflow() {
+    streamRef.current?.close(); streamRef.current = null;
+    botFetch(`${BOT_BASE}/api/cafe/inflow-cancel`, { method: "POST" }).catch(() => {});
+    lastPayloadRef.current = null; activeArticlesRef.current = []; doneRef.current = 0;
+    setRunState("idle"); setProg({ done: 0, total: 0 });
+    log.push("🛑 유입 취소됨 (완전 중단)", "error");
   }
 
   // ── 모드1: 집중 유입(글 링크 직접) ──
@@ -346,11 +373,20 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
         </>
       )}
 
-      {/* 진행/중단 (공통) */}
-      {running && (
-        <div style={card}>
-          <div style={{ color: "var(--m-sub)", fontSize: 12.5, marginBottom: 8 }}>진행 {prog.done}/{prog.total || "?"}</div>
-          <button className="moca-w-btn" onClick={stopInflow} style={{ width: "100%", background: "var(--m-log-error)", color: "#fff", border: "none", borderRadius: 8, padding: "13px", fontSize: 15, fontWeight: 800, cursor: "pointer" }}>🛑 유입 중단</button>
+      {/* 진행 + 제어(정지/이어가기/취소) — 공통, 발행처럼 */}
+      {runState !== "idle" && (
+        <div style={{ ...card, position: "sticky", bottom: 0 }}>
+          <div style={{ color: "var(--m-sub)", fontSize: 12.5, marginBottom: 8 }}>
+            {runState === "running" ? "▶ 유입 진행 중" : "⏸ 정지됨"} · 진행 {prog.done}/{prog.total || "?"}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="moca-w-btn" onClick={pauseInflow} disabled={runState !== "running"}
+              style={{ flex: 1, background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 8, padding: "13px", fontSize: 14, fontWeight: 700, cursor: runState === "running" ? "pointer" : "default", opacity: runState === "running" ? 1 : 0.5 }}>⏸ 정지</button>
+            <button className="moca-w-btn" onClick={resumeInflow} disabled={runState !== "paused"}
+              style={{ flex: 1, background: runState === "paused" ? "var(--m-gold)" : "var(--m-tabhover)", color: runState === "paused" ? "var(--m-goldink)" : "var(--m-dim)", border: "none", borderRadius: 8, padding: "13px", fontSize: 14, fontWeight: 800, cursor: runState === "paused" ? "pointer" : "default", opacity: runState === "paused" ? 1 : 0.5 }}>⏭ 이어가기</button>
+            <button className="moca-w-btn" onClick={cancelInflow}
+              style={{ flex: 1, background: "var(--m-log-error)", color: "#fff", border: "none", borderRadius: 8, padding: "13px", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>🛑 취소</button>
+          </div>
         </div>
       )}
     </div>
