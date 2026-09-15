@@ -12,6 +12,7 @@ import PromoTab from "./components/PromoTab";
 import ActivityTab from "./components/ActivityTab";
 import ManageTab from "./components/ManageTab";
 import PasswordInput from "./components/PasswordInput";
+import { botFetch, BOT_BASE } from "./lib/botApi";
 import { useLog, type UseLog } from "./lib/useLog";
 
 // 임시 관리자 게이트. TODO(STEP1): Supabase moca_admins 테이블 인증으로 교체.
@@ -151,6 +152,22 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
   const promoLog = useLog();
   const activityLog = useLog();
   const manageLog = useLog();
+  // 🟢 봇 온라인/오프라인 실시간 체크 — /health 폴링. 봇(3383)이 살아있으면 online.
+  const [botOnline, setBotOnline] = useState<boolean | null>(null);
+  const [botBusy, setBotBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const ping = async () => {
+      try {
+        const r = await botFetch(`${BOT_BASE}/health`, { signal: AbortSignal.timeout(4000) });
+        const d = await r.json().catch(() => ({}));
+        if (alive) { setBotOnline(r.ok); setBotBusy(!!d.busy); }
+      } catch { if (alive) { setBotOnline(false); setBotBusy(false); } }
+    };
+    ping();
+    const id = setInterval(ping, 5000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
   const [showWindow, setShowWindow] = useState(false);
   const [tab, setTab] = useState("write");
   const logByTab: Record<string, UseLog> = { write: writeLog, accounts: acctLog, flow: flowLog, inflow: inflowLog, promo: promoLog, activity: activityLog, manage: manageLog };
@@ -186,9 +203,15 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px 10px 82px", borderBottom: "1px solid var(--m-line)", background: "var(--m-tabbar)", WebkitAppRegion: "drag" } as React.CSSProperties}>
         <b style={{ color: "var(--m-gold)", fontSize: 18, letterSpacing: 2 }}>☕ MOCA</b>
         <span style={{ color: "var(--m-dim)", fontSize: 12 }}>네이버 카페 자동화 · 관리자</span>
-        <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--m-log-success)" }}>
-          <span className="moca-live-dot" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--m-log-success)", display: "inline-block", boxShadow: "0 0 6px var(--m-log-success)" }} />봇 대기
-        </span>
+        {(() => {
+          const c = botOnline === null ? "var(--m-dim)" : botOnline ? "var(--m-log-success)" : "var(--m-log-error)";
+          const label = botOnline === null ? "봇 확인 중…" : botOnline ? (botBusy ? "봇 작업 중" : "봇 온라인") : "봇 오프라인";
+          return (
+            <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: c }} title={botOnline ? "봇 서버(3383) 정상" : "봇 서버 응답 없음 — 앱을 껐다 켜거나 잠시 기다려 주세요"}>
+              <span className={botOnline !== false ? "moca-live-dot" : ""} style={{ width: 8, height: 8, borderRadius: "50%", background: c, display: "inline-block", boxShadow: botOnline ? "0 0 6px var(--m-log-success)" : "none" }} />{label}
+            </span>
+          );
+        })()}
         <div style={{ WebkitAppRegion: "no-drag", display: "flex", alignItems: "center", gap: 10 } as React.CSSProperties}>
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
           <button className="moca-ghost" onClick={onLogout} style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
