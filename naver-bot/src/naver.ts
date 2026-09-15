@@ -541,7 +541,9 @@ export async function resolveCafeId(cafeAddress: string, onLog: (m: string) => v
       const w: any = window;
       const html = document.documentElement.innerHTML;
       const cid = w.g_sClubId ? String(w.g_sClubId) : (html.match(/clubid[=:"']+(\d{5,})/i) || html.match(/cafeId["':=]+(\d{5,})/i) || html.match(/cafes\/(\d{5,})/) || [])[1] || "";
-      const name = w.g_sCafeName || (document.querySelector('meta[property="og:title"]') as HTMLMetaElement)?.content || document.title.replace(/\s*:\s*네이버.*$/, "").trim() || "";
+      // 카페 이름: title이 비로그인에서도 채워짐("○○ : 네이버 카페"). g_sCafeName·og:title은 null인 경우 많음.
+      const clean = (s: string) => (s || "").replace(/\s*[:：|\-]\s*네이버\s*카페.*$/i, "").replace(/\s*:\s*네이버.*$/i, "").trim();
+      const name = w.g_sCafeName || clean(document.title) || clean((document.querySelector('meta[property="og:title"]') as HTMLMetaElement)?.content || "");
       return { cid, name: String(name).trim().slice(0, 60) };
     }).catch(() => ({ cid: "", name: "" }));
     const m0 = addr.match(/cafes\/(\d+)/);
