@@ -645,6 +645,7 @@ export interface PublishCafeParams {
   imgPrompts?: string[]; // 이미지 생성 프롬프트(imgCount개)
   flowSlots?: number[];  // 사용할 플로우 계정 slot 목록(순서대로, 크레딧 소진 시 다음)
   draftOnly?: boolean;   // true=임시등록(테스트용, 실제 공개 안 함) / false=실제 등록
+  publishOptions?: { allowComment?: boolean; allowScrap?: boolean; allowCopy?: boolean; autoSource?: boolean; ccl?: boolean }; // 공개 설정(체크박스 자동 세팅)
   showWindow?: boolean;
   onShot?: (caption: string, dataUrl: string) => void;
   onLog?: (msg: string) => void;
@@ -653,7 +654,7 @@ export interface PublishCafeParams {
 }
 
 export async function publishCafe(params: PublishCafeParams): Promise<{ url: string }> {
-  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], onPartnerProducts = [], faq = "", hashtags = "", imgCount = 0, imgPrompts = [], flowSlots = [], draftOnly = false, showWindow = false, onShot, onLog = console.log, onBrowser, isCancelled } = params;
+  const { userId, cafeId, cafeUrl, menuId, title, greeting = "", body, links = [], onPartnerProducts = [], faq = "", hashtags = "", imgCount = 0, imgPrompts = [], flowSlots = [], draftOnly = false, publishOptions, showWindow = false, onShot, onLog = console.log, onBrowser, isCancelled } = params;
   // 온파트너 상품 카드(OG) — 본문 이미지 사이에 분산 삽입 / 상단 제휴 안내 문구
   const partnerList = (onPartnerProducts || []).filter(p => p && p.partnerUrl && p.name);
   const ONPARTNER_DISCLOSURE = "※ 이 글에는 제휴 링크가 포함되어 있으며, 구매 시 작성자에게 일정 수수료가 발생할 수 있습니다.";
@@ -981,6 +982,41 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
       await page.keyboard.press("Enter").catch(() => {});
       onLog(`[cafe] 🔗 링크 입력: ${l.name} (${l.url}) — 배너 임베드 대기…`);
       await page.waitForTimeout(3500).catch(() => {});
+    }
+
+    // 🔒 공개 설정 체크박스 자동 세팅(등록 직전). 라벨 텍스트로 찾아 원하는 상태로. 진단 로그로 성공/실패 확인.
+    if (publishOptions) {
+      const wanted: [string, boolean | undefined][] = [
+        ["댓글", publishOptions.allowComment],
+        ["스크랩", publishOptions.allowScrap],
+        ["복사", publishOptions.allowCopy],
+        ["자동출처", publishOptions.autoSource],
+        ["CCL", publishOptions.ccl],
+      ];
+      for (const [kw, want] of wanted) {
+        if (want === undefined) continue;
+        try {
+          const res = await page.evaluate(({ kw, want }: { kw: string; want: boolean }) => {
+            const norm = (s: string) => (s || "").replace(/\s/g, "");
+            const cands = Array.from(document.querySelectorAll("label, li, div, span")) as HTMLElement[];
+            let host: HTMLElement | null = null; let cb: HTMLInputElement | null = null;
+            for (const e of cands) {
+              const box = e.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+              if (!box) continue;
+              const txt = norm(e.innerText || e.textContent || "");
+              if (txt.includes(kw) && txt.length <= 24) { host = e; cb = box; break; }
+            }
+            if (!host || !cb) return `없음:${kw}`;
+            const was = cb.checked;
+            if (was !== want) ((host.querySelector("label") as HTMLElement) || host).click();
+            return `${kw}: ${was ? "ON" : "OFF"}→${want ? "ON" : "OFF"}`;
+          }, { kw, want });
+          onLog(`[cafe] 🔒 공개설정 ${res}`);
+        } catch (e: any) {
+          onLog(`[cafe] 🔒 공개설정 ${kw} 세팅 실패: ${String(e?.message || e).slice(0, 60)}`);
+        }
+      }
+      await page.waitForTimeout(400).catch(() => {});
     }
 
     // 3) 등록(또는 임시등록)

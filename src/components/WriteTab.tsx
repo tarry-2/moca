@@ -55,6 +55,10 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const [useGreeting, setUseGreeting] = useState(true);
   const [useLink, setUseLink] = useState(true);
   const [draftOnly, setDraftOnly] = useState(false); // 기본 = 실제 발행(등록). 체크하면 임시등록(테스트)
+  // 🔒 공개 설정(발행 시 봇이 카페 글쓰기 옵션 자동 세팅). 기본=복사·저장 방지 + 자동출처 남기기
+  const PUB_DEFAULT = { allowComment: true, allowScrap: true, allowCopy: false, autoSource: true, ccl: false };
+  const [pubOpts, setPubOpts] = useState<typeof PUB_DEFAULT>(() => { try { return { ...PUB_DEFAULT, ...JSON.parse(localStorage.getItem("moca_pub_opts") || "{}") }; } catch { return PUB_DEFAULT; } });
+  function setPub(key: keyof typeof PUB_DEFAULT, v: boolean) { setPubOpts((prev) => { const n = { ...prev, [key]: v }; localStorage.setItem("moca_pub_opts", JSON.stringify(n)); return n; }); }
   // 🤝 온파트너 = "상품 링크"(홈링크 아님). 상품링크 입력→조회(미리보기)→추가(최대 3개). 발행 시 본문 이미지 사이에 상품카드(OG 썸네일) 분산 삽입.
   const [onPartnerItems, setOnPartnerItems] = useState<OnPartnerItem[]>(() => { try { return JSON.parse(localStorage.getItem("moca_onpartner_items") || "[]"); } catch { return []; } });
   const [onPartnerLink, setOnPartnerLink] = useState("");       // 입력 중인 상품 링크
@@ -249,7 +253,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         // greeting=인사말(맨 위), body=본문(글·이미지 번갈아), links=온파트너/내링크, faq=질문형식(맨 아래).
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, onPartnerProducts, faq, hashtags, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, onPartnerProducts, faq, hashtags, imgCount, imgPrompts, flowSlots, draftOnly, publishOptions: pubOpts, showWindow: showWindowState }),
       });
       const d = await res.json();
       // 봇 진단 로그를 화면 로그로
@@ -279,7 +283,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         signal: abortRef.current.signal,
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title: post.title, greeting: useGreeting ? savedGreeting : "", body: post.body, links, onPartnerProducts, faq: post.faq, hashtags: post.hashtags, imgCount, imgPrompts, flowSlots, draftOnly, showWindow: showWindowState }),
+        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title: post.title, greeting: useGreeting ? savedGreeting : "", body: post.body, links, onPartnerProducts, faq: post.faq, hashtags: post.hashtags, imgCount, imgPrompts, flowSlots, draftOnly, publishOptions: pubOpts, showWindow: showWindowState }),
       });
       const d = await res.json();
       (d.logs || []).forEach((m: string) => log.push(m, m.includes("⚠️") ? "warn" : (m.includes("실패") || m.includes("오류")) ? "error" : "info", cafeName));
@@ -580,6 +584,26 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
             {imgCount === 0 ? "글만 발행" : `${imgCount}장 생성`}
           </span>
         </div>
+      </div>
+
+      {/* 🔒 공개 설정 (발행 시 봇이 카페 글쓰기 옵션 자동 세팅) */}
+      <div style={card}>
+        <label style={stepLabel}>🔒 공개 설정 <span style={{ color: "var(--m-dim)", fontWeight: 400, fontSize: 12 }}>· 발행할 때 이 상태로 자동 세팅돼요</span></label>
+        {([
+          ["allowComment", "댓글 허용", "다른 회원이 댓글을 달 수 있어요(소통·활성도)"],
+          ["allowScrap", "카페·블로그 스크랩 허용", "출처를 달고 퍼가기 가능 → 홍보 확산에 유리"],
+          ["allowCopy", "복사·저장 허용", "끄면 본문 드래그 복사를 막아요(자동복사 방지)"],
+          ["autoSource", "자동출처 사용", "복사돼도 원문 출처가 자동으로 붙어요(내 카페 유입)"],
+          ["ccl", "CCL 사용", "저작물 이용 조건(크리에이티브 커먼즈) 표시. 마케팅 글엔 보통 불필요"],
+        ] as [keyof typeof PUB_DEFAULT, string, string][]).map(([key, label, desc]) => (
+          <label key={key} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", cursor: "pointer", borderBottom: "1px solid var(--m-line)" }}>
+            <input type="checkbox" checked={pubOpts[key]} onChange={(e) => setPub(key, e.target.checked)} style={{ width: "auto", marginTop: 3 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: "var(--m-text)", fontSize: 13, fontWeight: 700 }}>{label} <span style={{ color: pubOpts[key] ? "var(--m-log-success)" : "var(--m-dim)", fontSize: 11, fontWeight: 600 }}>{pubOpts[key] ? "· 켜짐" : "· 꺼짐"}</span></div>
+              <div style={{ color: "var(--m-dim)", fontSize: 11.5, lineHeight: 1.4 }}>{desc}</div>
+            </div>
+          </label>
+        ))}
       </div>
 
       {/* 발행 모드 토글 */}

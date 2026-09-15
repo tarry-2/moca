@@ -189,7 +189,7 @@ app.post("/api/cafe/cancel", async (_req, res) => {
 app.post("/api/cafe/publish", async (req, res) => {
   const finishWork = beginWork();
   try {
-    const { userId, cafeId, cafeUrl, menuId, title, greeting, body, links, onPartnerProducts, faq, hashtags, imgCount, imgPrompts, flowSlots, draftOnly, showWindow } = req.body || {};
+    const { userId, cafeId, cafeUrl, menuId, title, greeting, body, links, onPartnerProducts, faq, hashtags, imgCount, imgPrompts, flowSlots, draftOnly, publishOptions, showWindow } = req.body || {};
     if (!userId || !cafeId || !menuId || !title || !body) {
       return res.status(400).json({ success: false, error: "userId, cafeId, menuId, title, body 필요" });
     }
@@ -200,6 +200,7 @@ app.post("/api/cafe/publish", async (req, res) => {
       const r = await publishCafe({
         userId, cafeId, cafeUrl, menuId, title, greeting, body, links,
         onPartnerProducts: Array.isArray(onPartnerProducts) ? onPartnerProducts : [],
+        publishOptions: publishOptions && typeof publishOptions === "object" ? publishOptions : undefined,
         faq, hashtags,
         imgCount: Number(imgCount) || 0,
         imgPrompts: Array.isArray(imgPrompts) ? imgPrompts : [],
