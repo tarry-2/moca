@@ -143,12 +143,13 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
       const rr = await botFetch(`${BOT_BASE}/api/cafe/resolve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cafeAddress: addr }) });
       const rd = await rr.json();
       if (!rd.cafeId) throw new Error(rd.error || "카페 ID를 못 찾음");
-      log.push(`✅ 카페 확인: ${rd.cafeId}. 공개 글 목록 불러오는 중(비로그인)…`, "progress");
-      const cr = await botFetch(`${BOT_BASE}/api/cafe/articles`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cafeId: rd.cafeId, cafeUrl: rd.cafeUrl, maxPages: 4 }) });
+      log.push(`✅ 카페 확인: ${rd.cafeId}. 글 목록 불러오는 중${accId ? "(로그인 크롤)" : "(비로그인)"}…`, "progress");
+      // 크롤은 계정 있으면 로그인(비공개·전체글 안정), 방문은 어차피 비로그인. 트래픽 방식과 동일.
+      const cr = await botFetch(`${BOT_BASE}/api/cafe/articles`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: accId || undefined, cafeId: rd.cafeId, cafeUrl: rd.cafeUrl, maxPages: 4 }) });
       const cd = await cr.json();
       (cd.logs || []).forEach((m: string) => log.push(m, m.includes("실패") || m.includes("⚠️") ? "warn" : "info"));
       const all: Article[] = cd.articles || [];
-      if (!all.length) { log.push("⚠️ 공개 글을 못 찾았어요. 비공개 카페면 '카테고리 순환(로그인)' 모드를 쓰세요.", "warn"); setBusy(null); return; }
+      if (!all.length) { log.push(accId ? "⚠️ 글을 못 찾았어요(로그가 원인 표시). '카테고리 순환' 모드로 게시판 지정해 보세요." : "⚠️ 글을 못 찾았어요. '카페 계정' 탭에서 계정을 선택하면 로그인 크롤로 더 잘 돼요.", "warn"); setBusy(null); return; }
       const shuffled = [...all].sort(() => Math.random() - 0.5).slice(0, Math.max(1, randomCount));
       log.push(`🎲 글 ${all.length}개 중 ${shuffled.length}개 랜덤 선택 → 유입`, "success");
       setBusy(null);

@@ -1,6 +1,6 @@
 {
   "name": "moca",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "MOCA (Marketing On CAfe) - 네이버 카페 자동화 앱",
   "main": "dist-electron/main.js",
   "scripts": {

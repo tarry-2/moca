@@ -744,24 +744,57 @@ export async function crawlCafeArticles(userId: string | undefined, cafeId: stri
   page.on("response", async (res) => {
     try {
       const u = res.url();
-      if (!/apis\.naver\.com\/cafe-web/.test(u) || !/[Aa]rticle/.test(u)) return;
+      if (!/apis\.naver\.com\/cafe-web|gw\.naver\.com/.test(u)) return; // cafe-web JSON 전부 캡처(Article 제한 제거)
       if (!(res.headers()["content-type"] || "").includes("json")) return;
       captured.push({ url: u, j: await res.json() });
     } catch { /* 파싱 실패 무시 */ }
   });
+  // DOM에서 글 링크 직접 스크랩(API 파싱보다 안정적). 신형 ca-fe + 클래식 iframe 둘 다.
+  async function scrapeDom(): Promise<CafeArticle[]> {
+    const out: CafeArticle[] = [];
+    for (const fr of page.frames()) {
+      try {
+        const rows = await fr.evaluate(() => {
+          const seen = new Set<string>(); const list: { aid: string; subject: string; href: string }[] = [];
+          for (const a of Array.from(document.querySelectorAll('a[href*="/articles/"], a[href*="articleid="], a[href*="ArticleRead"]'))) {
+            const href = (a as HTMLAnchorElement).href || "";
+            const m = href.match(/\/articles\/(\d+)/) || href.match(/articleid=(\d+)/i);
+            if (!m) continue;
+            const subject = ((a as HTMLElement).innerText || a.textContent || "").trim();
+            if (!subject || subject.length < 2) continue;
+            if (seen.has(m[1])) continue; seen.add(m[1]);
+            list.push({ aid: m[1], subject: subject.slice(0, 120), href });
+          }
+          return list;
+        });
+        for (const r of rows) out.push({ articleId: r.aid, subject: r.subject, url: r.href.startsWith("http") ? r.href : `https://cafe.naver.com/ca-fe/cafes/${cafeId}/articles/${r.aid}`, writeMs: 0 });
+      } catch { /* frame 접근 실패 무시 */ }
+    }
+    // 중복 제거
+    const uniq: Record<string, CafeArticle> = {}; for (const a of out) if (!uniq[a.articleId]) uniq[a.articleId] = a;
+    return Object.values(uniq);
+  }
   try {
-    // menuId 있으면 그 게시판, 없으면 카페 전체글(ca-fe/…/articles 최근). 비로그인이면 공개글만 보임.
-    const listUrl = menuId
-      ? `https://cafe.naver.com/ca-fe/cafes/${cafeId}/menus/${menuId}`
-      : `https://cafe.naver.com/ca-fe/cafes/${cafeId}`;
+    // 전체글 보기(menuId=0) — 카페 홈엔 글목록이 없어서 전체글/게시판 URL로 가야 API·DOM에 글이 뜬다.
+    const listUrl = `https://cafe.naver.com/ca-fe/cafes/${cafeId}/menus/${menuId || "0"}?viewType=L`;
     onLog(`[유입] 📰 ${userId ? "로그인" : "비로그인"} 글목록 열기: ${listUrl}`);
     await page.goto(listUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(3500);
+    await page.waitForTimeout(4000);
     const pages = Math.max(1, opts.maxPages || 3);
     for (let i = 0; i < pages; i++) { await page.mouse.wheel(0, 3000).catch(() => {}); await page.waitForTimeout(1500); }
-    const arts = parseCafeArticles(captured, cafeId);
-    onLog(`[유입] 응답 ${captured.length}건에서 글 ${arts.length}개 파싱`);
-    if (!arts.length) onLog(`[유입] ⚠️ 글 0개 — 게시판 응답 구조가 다를 수 있어요(진단: ${captured.map((c) => c.url.split("?")[0]).join(" ").slice(0, 200)})`);
+    // 1차: API 응답 파싱, 2차: DOM 스크랩(둘 합침)
+    const fromApi = parseCafeArticles(captured, cafeId);
+    const fromDom = await scrapeDom();
+    const merged: Record<string, CafeArticle> = {};
+    for (const a of [...fromApi, ...fromDom]) if (a.articleId && !merged[a.articleId]) merged[a.articleId] = a;
+    const arts = Object.values(merged);
+    onLog(`[유입] 글 ${arts.length}개 (API ${fromApi.length} + DOM ${fromDom.length}) · 캡처응답 ${captured.length}건`);
+    if (!arts.length) {
+      const curUrl = page.url();
+      const diagCap = captured.map((c) => c.url.split("?")[0]).slice(0, 8).join(" ");
+      onLog(`[유입] ⚠️ 글 0개 — 현재 URL: ${curUrl}${curUrl.includes("nid.naver") ? " (로그인 필요=비공개 카페일 수 있음)" : ""}`);
+      onLog(`[유입] 진단(캡처 URL): ${diagCap || "없음"} / DOM 링크도 0 — 카페가 비공개거나 글목록 셀렉터 상이`);
+    }
     await browser.close();
     return arts;
   } catch (e) { await browser.close().catch(() => {}); throw e; }
