@@ -7,8 +7,9 @@ import LogConsole from "./components/LogConsole";
 import AccountsTab from "./components/AccountsTab";
 import WriteTab from "./components/WriteTab";
 import FlowTab from "./components/FlowTab";
+import InflowTab from "./components/InflowTab";
 import PasswordInput from "./components/PasswordInput";
-import { useLog } from "./lib/useLog";
+import { useLog, type UseLog } from "./lib/useLog";
 
 // 임시 관리자 게이트. TODO(STEP1): Supabase moca_admins 테이블 인증으로 교체.
 const ADMIN_PW = "moca2026";
@@ -138,9 +139,18 @@ const TABS = [
 ];
 
 function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; theme: Theme; onToggleTheme: () => void }) {
-  const log = useLog();
+  // 🔴 기능별 독립 로그(테리: 발행·홍보·유입이 각각 따로 진행 + 로그 분리, 트래픽처럼).
+  //    각 탭이 자기 로그를 갖고 동시에 돌아가고, 우측 로그창은 "지금 보고 있는 탭"의 로그만 보여준다.
+  const writeLog = useLog();
+  const acctLog = useLog();
+  const flowLog = useLog();
+  const inflowLog = useLog();
+  const promoLog = useLog();
   const [showWindow, setShowWindow] = useState(false);
   const [tab, setTab] = useState("write");
+  const logByTab: Record<string, UseLog> = { write: writeLog, accounts: acctLog, flow: flowLog, inflow: inflowLog, promo: promoLog };
+  const activeLog = logByTab[tab] || writeLog;
+  const logTitle = tab === "inflow" ? "유입 로그" : tab === "promo" ? "홍보 로그" : tab === "flow" ? "플로우 로그" : tab === "accounts" ? "계정 로그" : "발행 로그";
   const [selectedAccs, setSelectedAccs] = useState<Set<string>>(new Set());
   const toggleAcc = (id: string) =>
     setSelectedAccs((prev) => {
@@ -196,21 +206,24 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
           {/* 🔴 탭을 옮겨도 언마운트하지 않는다(상태·진행 유지) — 방문한 탭은 계속 살려두고 display로만 숨김.
               퍼블리 불변 원칙: 탭 이동/화면 내림에도 안 꺼짐(조건부 렌더 금지). */}
           <div style={{ display: tab === "write" ? "block" : "none" }}>
-            <WriteTab selected={selectedAccs} log={log} showWindow={showWindow} />
+            <WriteTab selected={selectedAccs} log={writeLog} showWindow={showWindow} />
           </div>
           <div style={{ display: tab === "accounts" ? "block" : "none" }}>
-            <AccountsTab selected={selectedAccs} onToggle={toggleAcc} log={log} />
+            <AccountsTab selected={selectedAccs} onToggle={toggleAcc} log={acctLog} />
           </div>
           <div style={{ display: tab === "flow" ? "block" : "none" }}>
-            <FlowTab log={log} />
+            <FlowTab log={flowLog} />
           </div>
-          {!["write", "accounts", "flow"].includes(tab) && (
+          <div style={{ display: tab === "inflow" ? "block" : "none" }}>
+            <InflowTab selected={selectedAccs} log={inflowLog} showWindow={showWindow} />
+          </div>
+          {!["write", "accounts", "flow", "inflow"].includes(tab) && (
             <p style={{ color: "var(--m-sub)", fontSize: 13, lineHeight: 1.6 }}>이 기능은 준비 중이에요 (STEP 로드맵 순서대로 구현).</p>
           )}
         </div>
 
         <div className="moca-logwrap">
-          <LogConsole log={log} title="실시간 로그" showWindow={showWindow} onToggleWindow={setShowWindow} />
+          <LogConsole log={activeLog} title={logTitle} showWindow={showWindow} onToggleWindow={setShowWindow} />
         </div>
       </div>
     </div>

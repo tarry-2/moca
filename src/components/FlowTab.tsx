@@ -84,7 +84,7 @@ export default function FlowTab({ log }: { log: UseLog }) {
     log.push(`━━ 🎨 이미지 생성 테스트 시작 (연결계정 ${connected.length}개, 1장) ━━`, "sys");
     let done = false;
     for (const a of connected) {
-      const port = 9222 + (a.slot ?? 0);
+      const port = 9252 + (a.slot ?? 0);
       log.push(`[slot ${a.slot}] ${a.google_email}로 생성 시도… (포트 ${port})`, "progress");
       try {
         const res = await botFetch(`${BOT_BASE}/api/flow-generate`, {

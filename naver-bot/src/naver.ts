@@ -468,11 +468,11 @@ export async function getNaverCategories(
 export interface MyCafe { cafeId: string; name: string; url: string; }
 export interface CafeBoard { menuId: string; name: string; type: string; }
 
-async function openCafeContext(userId: string) {
+async function openCafeContext(userId: string, headed = false) {
   if (!naverSessionExists(userId)) throw new Error("네이버 세션 없음(먼저 계정 로그인)");
   const session = readSession<any>(naverSessionName(userId), LEGACY_SESSION_DIRS);
   const cookies = await ensureLiveSessionNaver(userId, console.log, session);
-  const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+  const browser = await chromium.launch({ headless: !headed, args: headed ? [...LAUNCH_ARGS, "--start-maximized"] : LAUNCH_ARGS });
   const context = await browser.newContext({ userAgent: UA, viewport: { width: 1280, height: 800 }, locale: "ko-KR", timezoneId: "Asia/Seoul" });
   await applyAntiDetection(context);
   await context.addCookies(cookies);
@@ -632,6 +632,100 @@ export async function getCafeBoards(userId: string, cafeId: string): Promise<Caf
   }
 }
 
+/* ═══════════════ 📈 카페 유입·조회수 (MOCA, 발행과 독립) ═══════════════ */
+export interface CafeArticle { articleId: string; subject: string; url: string; writeMs: number; }
+
+// 캡처된 카페 API 응답들에서 글(articleId+subject+작성일)을 재귀로 유연하게 추출.
+function parseCafeArticles(captured: { url: string; j: any }[], cafeId: string): CafeArticle[] {
+  const out: Record<string, CafeArticle> = {};
+  const visit = (node: any) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { node.forEach(visit); return; }
+    const id = node.articleId ?? node.articleid ?? node.refArticleId;
+    const subj = node.subject ?? node.subjectHtml ?? node.title;
+    if (id && subj && !/^https?:/.test(String(subj))) {
+      const aid = String(id);
+      const wt = node.writeDate ?? node.writeDateTimestamp ?? node.addDate ?? node.menuOpenDate ?? node.updateDate ?? 0;
+      let writeMs = 0;
+      if (typeof wt === "number" && wt > 0) writeMs = wt < 1e12 ? wt * 1000 : wt;
+      else if (typeof wt === "string") { const p = Date.parse(wt); if (!isNaN(p)) writeMs = p; }
+      if (!out[aid]) out[aid] = {
+        articleId: aid,
+        subject: String(subj).replace(/<[^>]+>/g, "").trim().slice(0, 120),
+        url: `https://cafe.naver.com/ca-fe/cafes/${cafeId}/articles/${aid}`,
+        writeMs,
+      };
+    }
+    for (const k in node) visit(node[k]);
+  };
+  captured.forEach((c) => visit(c.j));
+  return Object.values(out);
+}
+
+// ⑤⑥ 게시판 글 목록 크롤(링크 수집). getMyCafes와 동일하게 response 가로채기(직접 fetch는 401 잦음).
+export async function crawlCafeArticles(userId: string, cafeId: string, _cafeUrl: string, menuId: string, opts: { maxPages?: number }, onLog: (m: string) => void): Promise<CafeArticle[]> {
+  const { browser, page } = await openCafeContext(userId);
+  const captured: { url: string; j: any }[] = [];
+  page.on("response", async (res) => {
+    try {
+      const u = res.url();
+      if (!/apis\.naver\.com\/cafe-web/.test(u) || !/[Aa]rticle/.test(u)) return;
+      if (!(res.headers()["content-type"] || "").includes("json")) return;
+      captured.push({ url: u, j: await res.json() });
+    } catch { /* 파싱 실패 무시 */ }
+  });
+  try {
+    const listUrl = `https://cafe.naver.com/ca-fe/cafes/${cafeId}/menus/${menuId}`;
+    onLog(`[유입] 📰 게시판 글목록 열기: ${listUrl}`);
+    await page.goto(listUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(3500);
+    const pages = Math.max(1, opts.maxPages || 3);
+    for (let i = 0; i < pages; i++) { await page.mouse.wheel(0, 3000).catch(() => {}); await page.waitForTimeout(1500); }
+    const arts = parseCafeArticles(captured, cafeId);
+    onLog(`[유입] 응답 ${captured.length}건에서 글 ${arts.length}개 파싱`);
+    if (!arts.length) onLog(`[유입] ⚠️ 글 0개 — 게시판 응답 구조가 다를 수 있어요(진단: ${captured.map((c) => c.url.split("?")[0]).join(" ").slice(0, 200)})`);
+    await browser.close();
+    return arts;
+  } catch (e) { await browser.close().catch(() => {}); throw e; }
+}
+
+// ⑦ 유입 실행 — 각 글을 세션 계정으로 방문·스크롤 체류(조회수). 발행과 독립 브라우저.
+export interface CafeInflowParams {
+  userId: string; cafeId: string; cafeUrl?: string;
+  articles: { articleId: string; subject: string; url: string }[];
+  dwellSec: number; repeat: number; showWindow?: boolean;
+  onLog?: (m: string) => void;
+  onProgress?: (done: number, total: number) => void;
+  onBrowser?: (b: import("playwright").Browser) => void;
+  isCancelled?: () => boolean;
+}
+export async function cafeInflow(p: CafeInflowParams): Promise<{ ok: number; total: number; viewed: number }> {
+  const { userId, articles, dwellSec, repeat, showWindow = false, onLog = console.log, onProgress, onBrowser, isCancelled } = p;
+  const { browser, page } = await openCafeContext(userId, showWindow);
+  onBrowser?.(browser);
+  const total = articles.length * Math.max(1, repeat);
+  let done = 0, viewed = 0;
+  try {
+    for (let r = 0; r < Math.max(1, repeat); r++) {
+      for (const a of articles) {
+        if (isCancelled?.()) { onLog("[유입] 🛑 취소됨 — 중단"); await browser.close().catch(() => {}); return { ok: viewed, total, viewed }; }
+        onLog(`[유입] (${done + 1}/${total}) 방문: ${a.subject.slice(0, 30)}`);
+        try {
+          await page.goto(a.url, { waitUntil: "domcontentloaded", timeout: 30000 });
+          const dwellMs = Math.max(10, dwellSec) * 1000;
+          const steps = Math.max(3, Math.floor(dwellSec / 8));
+          for (let s = 0; s < steps; s++) { if (isCancelled?.()) break; await page.mouse.wheel(0, 500 + Math.floor(Math.random() * 400)).catch(() => {}); await page.waitForTimeout(Math.round(dwellMs / steps)); }
+          viewed++;
+          onLog(`[유입] ✅ 조회 완료: ${a.subject.slice(0, 20)}`);
+        } catch (e: any) { onLog(`[유입] ⚠️ 방문 실패: ${String(e?.message || e).slice(0, 60)}`); }
+        done++; onProgress?.(done, total);
+      }
+    }
+    await browser.close();
+    return { ok: viewed, total, viewed };
+  } catch (e) { await browser.close().catch(() => {}); throw e; }
+}
+
 // ☕ 카페 글 발행 — 진단로그+창보기+단계별 캡처. 첫 실행 때 에디터 구조를 로그로 파악해 교정.
 export interface PublishCafeParams {
   userId: string;
@@ -678,7 +772,7 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
       if (flowImages.length >= imgCount) break; // 이미 다 채움
       const need = imgCount - flowImages.length;
       const remainPrompts = imgPrompts.slice(flowImages.length); // 남은 프롬프트만
-      const port = 9222 + slot;
+      const port = 9252 + slot;
       onLog(`[cafe] [slot ${slot}] 이미지 ${need}장 생성 시도 (포트 ${port}, 현재 ${flowImages.length}/${imgCount})…`);
       try {
         const imgs = await generateFlowImagesCDP({ prompts: remainPrompts, captions: [], cdpPort: port, onLog });
@@ -2908,7 +3002,7 @@ export async function generateFlowImagesCDP(params: {
   cdpPort?: number;
   onLog?: (msg: string) => void;
 }): Promise<{ src: string; alt: string }[]> {
-  const { prompts, captions = [], cdpPort = 9222, onLog } = params;
+  const { prompts, captions = [], cdpPort = 9252, onLog } = params;
   const log = onLog || console.log;
   // 재시도 큐에서는 뒤 프롬프트가 먼저 성공할 수 있으므로 원래 순서를 함께 보존한다.
   const results: { src: string; alt: string; promptIndex: number }[] = [];

@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards, publishCafe } from "./naver";
+import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards, publishCafe, crawlCafeArticles, cafeInflow } from "./naver";
 import { saveTistorySession, publishTistory, tistorySessionExists, deleteTistorySession } from "./tistory";
 import { fetchPendingJobs, updateJob, claimPendingJob, finishQueuedHistory, useQuota, refundQuota, checkPublishEntitlement, incrementDailyPublish } from "./supabase";
 import { acquireAccountLock } from "./account-lock";
@@ -185,6 +185,62 @@ app.post("/api/cafe/cancel", async (_req, res) => {
   res.json({ ok: true, closed: n });
 });
 
+/* ── 📈 카페 유입: 게시판 글 크롤(링크 수집) ── */
+app.post("/api/cafe/articles", async (req, res) => {
+  const finishWork = beginWork();
+  try {
+    const { userId, cafeId, cafeUrl, menuId, maxPages } = req.body || {};
+    if (!userId || !cafeId || !menuId) return res.status(400).json({ error: "userId, cafeId, menuId 필요", articles: [] });
+    const logs: string[] = [];
+    try {
+      const articles = await crawlCafeArticles(userId, cafeId, cafeUrl || "", menuId, { maxPages: Number(maxPages) || 3 }, (m) => { logs.push(m); console.log(m); });
+      res.json({ articles, logs });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message, articles: [], logs });
+    }
+  } finally { finishWork(); }
+});
+
+/* ── 📈 카페 유입: 실행(SSE 실시간). 발행과 독립 브라우저·독립 취소 플래그 ── */
+let activeInflowBrowsers: import("playwright").Browser[] = [];
+let inflowCancelled = false;
+app.post("/api/cafe/inflow-cancel", async (_req, res) => {
+  inflowCancelled = true;
+  const n = activeInflowBrowsers.length;
+  console.log(`[유입] 🛑 취소 요청 — 진행 중 브라우저 ${n}개 종료`);
+  for (const b of activeInflowBrowsers) { try { await b.close(); } catch {} }
+  activeInflowBrowsers = [];
+  res.json({ ok: true, closed: n });
+});
+app.post("/api/cafe/inflow", async (req, res) => {
+  const finishWork = beginWork();
+  const { userId, cafeId, cafeUrl, articles, dwellSec, repeat, showWindow } = req.body || {};
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  (res as any).flushHeaders?.();
+  const send = (o: object) => { try { res.write(`data: ${JSON.stringify(o)}\n\n`); } catch {} };
+  if (!userId || !cafeId || !Array.isArray(articles) || !articles.length) {
+    send({ type: "done", success: false, error: "userId, cafeId, articles 필요" });
+    res.end(); finishWork(); return;
+  }
+  inflowCancelled = false;
+  try {
+    const r = await cafeInflow({
+      userId, cafeId, cafeUrl,
+      articles, dwellSec: Number(dwellSec) || 35, repeat: Number(repeat) || 1,
+      showWindow: showWindow === true || showWindow === "true",
+      onLog: (m) => { console.log(m); send({ type: "log", msg: m }); },
+      onProgress: (done, total) => send({ type: "progress", done, total }),
+      onBrowser: (b) => { activeInflowBrowsers.push(b); b.on("disconnected", () => { activeInflowBrowsers = activeInflowBrowsers.filter((x) => x !== b); }); },
+      isCancelled: () => inflowCancelled,
+    });
+    send({ type: "done", success: true, viewed: r.viewed, ok: r.ok, total: r.total });
+  } catch (e: any) {
+    send({ type: "done", success: false, error: e.message });
+  } finally { res.end(); finishWork(); }
+});
+
 /* ── ☕ 카페: 글 발행(SSE 실시간 스트리밍) ──
    봇의 onLog/onShot을 발행 진행 중 실시간으로 흘려보낸다(발행 끝나야 한 번에 오던 것 개선). */
 app.post("/api/cafe/publish", async (req, res) => {
@@ -301,7 +357,7 @@ app.post("/api/publish-full", async (req, res) => {
         const flowImages = await generateFlowImagesCDP({
           prompts: flowPrompts,
           captions: flowCaptions || [],
-          cdpPort: (typeof cdpPort === "number" && cdpPort >= 9222 && cdpPort <= 9299) ? cdpPort : 9222,   // 슬롯별 포트(프론트가 9222+slot 전달)
+          cdpPort: (typeof cdpPort === "number" && cdpPort >= 9252 && cdpPort <= 9299) ? cdpPort : 9252,   // 슬롯별 포트(프론트가 9252+slot 전달)
           onLog: (msg) => console.log(msg),
         });
 
@@ -577,9 +633,9 @@ app.post("/api/gemini-vision", async (req, res) => {
    /json/version(포트)뿐 아니라 실제 page 타겟 존재까지 확인한다. */
 app.get("/api/flow/status", async (_req, res) => {
   try {
-    const v = await fetch("http://localhost:9222/json/version", { signal: AbortSignal.timeout(2000) });
+    const v = await fetch("http://localhost:9252/json/version", { signal: AbortSignal.timeout(2000) });
     if (!v.ok) return res.json({ ready: false, reason: "cdp_not_ok" });
-    const listRes = await fetch("http://localhost:9222/json", { signal: AbortSignal.timeout(2000) });
+    const listRes = await fetch("http://localhost:9252/json", { signal: AbortSignal.timeout(2000) });
     if (!listRes.ok) return res.json({ ready: false, reason: "cdp_no_targets" });
     const targets = await listRes.json();
     const hasPage = Array.isArray(targets) && targets.some((t: any) => t && t.type === "page");
@@ -604,7 +660,7 @@ app.post("/api/flow-generate", async (req, res) => {
       const images = await generateFlowImagesCDP({
         prompts,
         captions: Array.isArray(captions) ? captions : [],
-        cdpPort: (typeof cdpPort === "number" && cdpPort >= 9222 && cdpPort <= 9299) ? cdpPort : 9222,   // 슬롯별 포트
+        cdpPort: (typeof cdpPort === "number" && cdpPort >= 9252 && cdpPort <= 9299) ? cdpPort : 9252,   // 슬롯별 포트
         onLog: (m) => console.log(m),
       });
       if (images.length === 0) {

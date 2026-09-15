@@ -698,12 +698,12 @@ ipcMain.handle("unregister-user", async (_event, userId: string) => {
 });
 
 /* ── Google Flow 준비: 디버깅 크롬 자동 실행 ──
-   Flow 이미지를 봇이 조작하려면 사용자 크롬이 디버깅 포트(9222)로 떠 있어야 한다.
+   Flow 이미지를 봇이 조작하려면 사용자 크롬이 디버깅 포트(9252)로 떠 있어야 한다.
    이 핸들러가 OS별 크롬 경로를 찾아 별도 프로필로 디버깅 크롬을 띄우고 Flow 페이지를 연다.
    별도 프로필이라 사용자의 평소 크롬과 분리되고, 로그인은 그 프로필에 유지된다. */
 // 슬롯별 Flow 크롬 프로세스(여러 구글 계정을 각자 프로필·포트로 분리 유지)
 const flowChromeProcs: Record<number, ChildProcess | null> = {};
-const FLOW_CDP_BASE = 9222;
+const FLOW_CDP_BASE = 9252;
 function flowCdpPort(slot = 0) { return FLOW_CDP_BASE + (slot || 0); }
 // slot 0은 기본 폴더(.moca-flow-chrome). 1↑는 -N 붙임.
 function flowProfileDir(slot = 0) { return path.join(app.getPath("home"), slot ? `.moca-flow-chrome-${slot}` : ".moca-flow-chrome"); }
