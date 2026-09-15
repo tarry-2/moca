@@ -789,14 +789,15 @@ export async function crawlCafeArticles(userId: string | undefined, cafeId: stri
     let fromApiDirect: CafeArticle[] = [];
     try {
       const apiRes: any = await page.evaluate(async ({ cid, mid, per }) => {
+        // ★현행 엔드포인트(실측 2026-09-15): cafe-boardlist-api/v1 — 비로그인 200 OK. result.articleList[].item
         const tries = [
-          `https://apis.naver.com/cafe-web/cafe2/ArticleListV2dot1.json?search.clubid=${cid}&search.queryType=lastArticle&search.menuid=${mid}&search.page=1&search.perPage=${per}`,
-          `https://apis.naver.com/cafe-web/cafe2/ArticleList.json?search.clubid=${cid}&search.queryType=lastArticle&search.menuid=${mid}&search.page=1&search.perPage=${per}`,
+          `https://apis.naver.com/cafe-web/cafe-boardlist-api/v1/cafes/${cid}/menus/${mid}/articles?page=1&perPage=${per}&sortBy=TIME`,
+          `https://apis.naver.com/cafe-web/cafe-boardlist-api/v1/cafes/${cid}/menus/${mid}/articles?page=1&pageSize=${per}`,
         ];
         for (const url of tries) {
-          try { const r = await fetch(url, { headers: { Accept: "application/json" }, credentials: "include" }); if (!r.ok) continue; return { url, json: await r.json() }; } catch { /* next */ }
+          try { const r = await fetch(url, { headers: { Accept: "application/json" }, credentials: "include" }); if (!r.ok) continue; const j = await r.json(); const list = j?.result?.articleList; if (Array.isArray(list) && list.length) return { url, json: j }; } catch { /* next */ }
         }
-        return { error: "ArticleList API 후보 전부 실패" };
+        return { error: "boardlist API 후보 전부 실패(글 0)" };
       }, { cid: cafeId, mid: menuId || "0", per: 50 });
       if (apiRes?.json) { fromApiDirect = parseCafeArticles([{ url: apiRes.url, j: apiRes.json }], cafeId); onLog(`[유입] 직접 API(${(apiRes.url || "").split("?")[0].split("/").pop()}) 글 ${fromApiDirect.length}개`); }
       else onLog(`[유입] 직접 API 실패: ${apiRes?.error || "?"}`);
