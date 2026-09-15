@@ -991,28 +991,45 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
     await submitEl.waitFor({ state: "visible", timeout: 10000 });
     onLog(`[cafe] ${draftOnly ? "임시등록" : "등록"} 버튼 클릭…`);
     await submitEl.click().catch(() => {});
-    await page.waitForTimeout(2500).catch(() => {});
-    // 확인 팝업이 뜨면 확인 클릭 (이 클릭으로 등록 완료 → 페이지가 닫히거나 이동할 수 있음)
-    let confirmClicked = false;
+    await page.waitForTimeout(2000).catch(() => {});
+    // 등록 직후 화면에 뜬 팝업/안내 텍스트 수집(보호조치·글쓰기 제한 등 진단 — 원인이 한 방에 나오게)
+    let popupText = "";
+    try {
+      popupText = await page.evaluate(() => {
+        const layers = [...document.querySelectorAll(".layer, .modal, [role=dialog], [class*=Popup], [class*=popup], [class*=Layer], [class*=alert]")];
+        return layers.map((el) => (el as HTMLElement).innerText || "").join(" ").replace(/\s+/g, " ").trim().slice(0, 300);
+      });
+    } catch {}
+    if (popupText) onLog(`[cafe] 🪧 등록 후 팝업/안내: ${popupText.slice(0, 200)}`);
+    // 확인 팝업이 뜨면 확인 클릭 (등록 확인 팝업일 수 있음)
     try {
       const confirmEl = page.locator("button.BaseButton--green, a.BaseButton--skinGreen, button").filter({ hasText: /^확인$/ }).first();
-      if (await confirmEl.count().catch(() => 0)) { onLog("[cafe] 확인 팝업 클릭"); await confirmEl.click({ timeout: 5000 }).catch(() => {}); confirmClicked = true; }
+      if (await confirmEl.count().catch(() => 0)) { onLog("[cafe] 확인 팝업 클릭"); await confirmEl.click({ timeout: 5000 }).catch(() => {}); }
     } catch {}
-    await page.waitForTimeout(1500).catch(() => {}); // ★page 닫혀도 에러 안 나게 catch
 
-    // ★"Target closed"(페이지 닫힘)는 등록 완료 신호 → 성공으로 처리. page 접근은 전부 안전하게.
+    // ★진짜 성공 판정: 확인 후 글쓰기 페이지(/write)를 벗어나 실제 글로 이동하는지 최대 8초 대기.
+    //   write에 그대로면 = 등록이 실제로 안 된 것(보호조치·제한·오류). "확인 눌렀으니 성공"으로 착각 금지.
+    let moved = false, pageClosed = false;
+    try { await page.waitForFunction(() => !location.href.includes("/write"), { timeout: 8000 }); moved = true; } catch {}
     let finalUrl = "";
-    let pageClosed = false;
     try { finalUrl = page.url(); } catch { pageClosed = true; }
 
     if (draftOnly) {
       onLog(`[cafe] 🎉 임시등록 완료! (카페 > 내가 쓴 글 > 임시저장에서 확인)`);
     } else {
-      // 실제 등록: 페이지가 닫혔거나 write를 벗어났으면 성공. write에 그대로면 실패 의심.
-      if (!pageClosed && finalUrl.includes("/write") && !confirmClicked) {
-        throw new Error(`발행 실패 추정 — 등록 후에도 글쓰기 페이지에 머물러 있어요. 등록 버튼/확인 확인 필요`);
+      const success = pageClosed || moved || /\/articles\/\d+/.test(finalUrl);
+      if (!success) {
+        // write에 그대로 = 등록 실패. 화면에서 원인 키워드 문장 뽑아 함께 던진다.
+        let warn = "";
+        try {
+          warn = await page.evaluate(() => {
+            const m = (document.body.innerText || "").match(/[^\n]*(보호|제한|스팸|권한|차단|불가|승인|신고|잠시|초과)[^\n]*/);
+            return m ? m[0].trim() : "";
+          });
+        } catch {}
+        throw new Error(`발행 실패 — 등록 후에도 글쓰기 페이지 그대로(글 URL이 안 바뀜). 네이버 계정 보호조치/글쓰기 제한 가능성.${popupText ? " 팝업: " + popupText.slice(0, 140) : ""}${warn ? " 화면: " + warn.slice(0, 140) : ""}`);
       }
-      onLog(`[cafe] 🎉 발행 완료!${finalUrl ? " 글 주소: " + finalUrl : ""}`);
+      onLog(`[cafe] 🎉 발행 완료!${finalUrl && !finalUrl.includes("/write") ? " 글 주소: " + finalUrl : " (등록 확인됨)"}`);
     }
     await shot(draftOnly ? "임시등록 완료" : "발행 완료").catch(() => {});
 
