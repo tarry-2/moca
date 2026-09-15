@@ -34,6 +34,27 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
   const [running, setRunning] = useState(false);
   const [prog, setProg] = useState({ done: 0, total: 0 });
   const streamRef = useRef<BotEventStream | null>(null);
+  // 🌐 프록시(DataImpulse) — 유입 IP 분산/고정. 연결되면 초록불 깜빡.
+  const [useProxy, setUseProxy] = useState(() => localStorage.getItem("moca_inflow_proxy") === "1");
+  const [proxyState, setProxyState] = useState<"off" | "checking" | "on" | "fail">("off");
+  const [proxyIp, setProxyIp] = useState("");
+  const proxySessidRef = useRef(localStorage.getItem("moca_inflow_sessid") || `inflow${Math.random().toString(36).slice(2, 8)}`);
+  if (localStorage.getItem("moca_inflow_sessid") !== proxySessidRef.current) localStorage.setItem("moca_inflow_sessid", proxySessidRef.current);
+
+  async function checkProxy() {
+    setProxyState("checking"); setProxyIp("");
+    log.push("🌐 프록시 연결 확인 중…", "progress");
+    try {
+      const r = await botFetch(`${BOT_BASE}/api/proxy/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessid: proxySessidRef.current }) });
+      const d = await r.json();
+      if (d.ok && d.ip) { setProxyState("on"); setProxyIp(d.ip); log.push(`🌐 ✅ 프록시 연결됨 — IP ${d.ip} (${d.ms}ms)`, "success"); }
+      else { setProxyState("fail"); log.push(`🌐 ❌ 프록시 연결 실패: ${d.error || "?"}`, "error"); }
+    } catch (e: any) { setProxyState("fail"); log.push(`🌐 프록시 확인 실패: ${e?.message || e} (데스크톱 앱 필요)`, "error"); }
+  }
+  function toggleProxy(on: boolean) {
+    setUseProxy(on); localStorage.setItem("moca_inflow_proxy", on ? "1" : "0");
+    if (on) checkProxy(); else { setProxyState("off"); setProxyIp(""); }
+  }
 
   // ── 모드1(빠른유입) 상태 ──
   const [quickCafeAddr, setQuickCafeAddr] = useState(() => localStorage.getItem("moca_inflow_quick_addr") || "");
@@ -72,9 +93,10 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
     if (running) return;
     setRunning(true); setProg({ done: 0, total: 0 });
     log.push(`━━ 🚦 유입 시작: ${label} ━━`, "sys");
-    log.push(`창보기 ${showWindow ? "ON(크롬 창 뜸)" : "OFF(백그라운드)"} · 글당 체류 ${dwellSec}초 · 반복 ${repeat}회`, "progress");
+    log.push(`창보기 ${showWindow ? "ON(크롬 창 뜸)" : "OFF(백그라운드)"} · 글당 체류 ${dwellSec}초 · 반복 ${repeat}회 · 프록시 ${useProxy ? "ON" : "OFF"}`, "progress");
+    const withProxy = { ...payload, useProxy, proxySessid: proxySessidRef.current };
     const es = new BotEventStream(`${BOT_BASE}/api/cafe/inflow`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(withProxy),
     });
     streamRef.current = es;
     es.onmessage = (ev) => {
@@ -210,6 +232,24 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
           유입 방문은 <b style={{ color: "var(--m-gold)" }}>🔓 비로그인(익명)</b>이라 계정 보호조치 위험이 없어요.
           <br /><span style={{ color: "var(--m-log-warn)" }}>⚠️ 밴 방지</span> — 체류를 넉넉히, 한 번에 너무 많이 돌리지 마세요.
         </p>
+      </div>
+
+      {/* 🌐 프록시 (초록불 깜빡) */}
+      <div style={{ ...card, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <style>{`@keyframes mocaBlink{0%,100%{opacity:1}50%{opacity:.25}} .moca-dot-on{animation:mocaBlink 1s ease-in-out infinite}`}</style>
+        <span style={{
+          width: 13, height: 13, borderRadius: "50%", flexShrink: 0,
+          background: proxyState === "on" ? "var(--m-log-success)" : proxyState === "checking" ? "var(--m-log-warn)" : proxyState === "fail" ? "var(--m-log-error)" : "var(--m-dim)",
+          boxShadow: proxyState === "on" ? "0 0 8px var(--m-log-success)" : "none",
+        }} className={proxyState === "on" || proxyState === "checking" ? "moca-dot-on" : ""} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ color: "var(--m-text)", fontSize: 13.5, fontWeight: 800 }}>🌐 프록시(고정 IP) {proxyState === "on" ? "· 연결됨" : proxyState === "checking" ? "· 확인 중…" : proxyState === "fail" ? "· 실패" : "· 꺼짐"}</div>
+          <div style={{ color: "var(--m-dim)", fontSize: 11.5 }}>{proxyState === "on" && proxyIp ? `나가는 IP ${proxyIp} — 연좌제 밴 방지` : "켜면 DataImpulse로 나가 IP가 분산돼요"}</div>
+        </div>
+        {useProxy && <button className="moca-w-btn" onClick={checkProxy} disabled={proxyState === "checking"} style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>🔍 확인</button>}
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--m-text)", cursor: "pointer", fontWeight: 700 }}>
+          <input type="checkbox" checked={useProxy} onChange={(e) => toggleProxy(e.target.checked)} style={{ width: "auto" }} /> 사용
+        </label>
       </div>
 
       {/* 모드 선택 */}

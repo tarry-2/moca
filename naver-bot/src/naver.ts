@@ -480,9 +480,46 @@ async function openCafeContext(userId: string, headed = false) {
   return { browser, page };
 }
 
+/* ── 🌐 프록시(DataImpulse) — 유입 방문 IP를 분산/고정해 연좌제 밴 방지 ──
+   형식(공식): username=`{login}__cr.kr;sessid.{고유ID}` / password=그대로. sessid마다 다른 exit IP(한국).
+   ⚠️ 계정정보는 우선 상수(퍼블리와 동일 DataImpulse). 추후 설정화 가능. env로 덮어쓸 수 있음. */
+const DATAIMPULSE = {
+  server: process.env.MOCA_PROXY_SERVER || "http://gw.dataimpulse.com:823",
+  login: process.env.MOCA_PROXY_LOGIN || "c4dc884e452df80c4d6b",
+  password: process.env.MOCA_PROXY_PW || "87e53222e36affb7",
+  country: process.env.MOCA_PROXY_COUNTRY || "kr",
+};
+export function buildProxy(sessid?: string): { server: string; username: string; password: string } {
+  const sid = (sessid || "").replace(/[^a-zA-Z0-9]/g, "") || `moca${Math.random().toString(36).slice(2, 10)}`;
+  const username = `${DATAIMPULSE.login}__cr.${DATAIMPULSE.country};sessid.${sid}`;
+  return { server: DATAIMPULSE.server, username, password: DATAIMPULSE.password };
+}
+// 프록시로 실제 나가는 IP 확인(초록불 판정용).
+export async function checkProxy(sessid?: string): Promise<{ ok: boolean; ip?: string; ms?: number; error?: string }> {
+  const proxy = buildProxy(sessid);
+  const t0 = Date.now();
+  let browser: import("playwright").Browser | null = null;
+  try {
+    browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS, proxy });
+    const ctx = await browser.newContext({ userAgent: UA });
+    const page = await ctx.newPage();
+    await page.goto("https://api.ipify.org?format=json", { waitUntil: "domcontentloaded", timeout: 15000 });
+    const txt = await page.evaluate(() => document.body.innerText).catch(() => "");
+    await browser.close();
+    const ip = (txt.match(/"ip"\s*:\s*"([^"]+)"/) || [])[1];
+    if (!ip) return { ok: false, error: "IP 응답 없음" };
+    return { ok: true, ip, ms: Date.now() - t0 };
+  } catch (e: any) {
+    await browser?.close().catch(() => {});
+    return { ok: false, error: String(e?.message || e).slice(0, 120) };
+  }
+}
+
 // 🔓 비로그인(익명) 카페 컨텍스트 — 유입(조회수)은 실제 익명 방문자처럼. 계정 로그인 안 하므로 보호조치 위험 없음.
-async function openAnonCafeContext(headed = false) {
-  const browser = await chromium.launch({ headless: !headed, args: headed ? [...LAUNCH_ARGS, "--start-maximized"] : LAUNCH_ARGS });
+//   proxySessid 주면 DataImpulse 프록시로 나감(IP 분산/고정). 없으면 로컬 IP.
+async function openAnonCafeContext(headed = false, proxySessid?: string) {
+  const proxy = proxySessid !== undefined ? buildProxy(proxySessid) : undefined;
+  const browser = await chromium.launch({ headless: !headed, args: headed ? [...LAUNCH_ARGS, "--start-maximized"] : LAUNCH_ARGS, ...(proxy ? { proxy } : {}) });
   const context = await browser.newContext({ userAgent: UA, viewport: { width: 1280, height: 800 }, locale: "ko-KR", timezoneId: "Asia/Seoul" });
   await applyAntiDetection(context);
   const page = await context.newPage();
@@ -736,16 +773,21 @@ export interface CafeInflowParams {
   cafeId?: string; cafeUrl?: string;
   articles: { articleId: string; subject: string; url: string }[];
   dwellSec: number; repeat: number; randomOrder?: boolean; showWindow?: boolean;
+  proxySessid?: string; // 있으면 DataImpulse 프록시로 방문(IP 분산/고정). undefined면 로컬 IP.
   onLog?: (m: string) => void;
   onProgress?: (done: number, total: number) => void;
   onBrowser?: (b: import("playwright").Browser) => void;
   isCancelled?: () => boolean;
 }
 export async function cafeInflow(p: CafeInflowParams): Promise<{ ok: number; total: number; viewed: number }> {
-  const { articles, dwellSec, repeat, randomOrder = false, showWindow = false, onLog = console.log, onProgress, onBrowser, isCancelled } = p;
-  const { browser, page } = await openAnonCafeContext(showWindow); // 🔓 비로그인 익명 방문
+  const { articles, dwellSec, repeat, randomOrder = false, showWindow = false, proxySessid, onLog = console.log, onProgress, onBrowser, isCancelled } = p;
+  const { browser, page } = await openAnonCafeContext(showWindow, proxySessid); // 🔓 비로그인 익명 방문
   onBrowser?.(browser);
   onLog("[유입] 🔓 비로그인(익명)으로 방문해요 — 계정 로그인 안 하니 보호조치 위험 없어요");
+  if (proxySessid !== undefined) {
+    try { await page.goto("https://api.ipify.org?format=json", { waitUntil: "domcontentloaded", timeout: 12000 }); const t = await page.evaluate(() => document.body.innerText).catch(() => ""); const ip = (t.match(/"ip"\s*:\s*"([^"]+)"/) || [])[1]; onLog(ip ? `[유입] 🌐 프록시 연결됨 — 나가는 IP: ${ip}` : "[유입] 🌐 프록시 사용(IP 확인 실패)"); }
+    catch { onLog("[유입] ⚠️ 프록시 IP 확인 실패 — 계속 진행"); }
+  } else onLog("[유입] 🌐 프록시 미사용(내 IP로 방문)");
   const total = articles.length * Math.max(1, repeat);
   let done = 0, viewed = 0;
   try {

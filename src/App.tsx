@@ -8,6 +8,7 @@ import AccountsTab from "./components/AccountsTab";
 import WriteTab from "./components/WriteTab";
 import FlowTab from "./components/FlowTab";
 import InflowTab from "./components/InflowTab";
+import PromoTab from "./components/PromoTab";
 import PasswordInput from "./components/PasswordInput";
 import { useLog, type UseLog } from "./lib/useLog";
 
@@ -217,7 +218,10 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
           <div style={{ display: tab === "inflow" ? "block" : "none" }}>
             <InflowTab selected={selectedAccs} log={inflowLog} showWindow={showWindow} />
           </div>
-          {!["write", "accounts", "flow", "inflow"].includes(tab) && (
+          <div style={{ display: tab === "promo" ? "block" : "none" }}>
+            <PromoTab selected={selectedAccs} log={promoLog} showWindow={showWindow} />
+          </div>
+          {!["write", "accounts", "flow", "inflow", "promo"].includes(tab) && (
             <p style={{ color: "var(--m-sub)", fontSize: 13, lineHeight: 1.6 }}>이 기능은 준비 중이에요 (STEP 로드맵 순서대로 구현).</p>
           )}
         </div>

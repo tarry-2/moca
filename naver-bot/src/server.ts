@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards, publishCafe, crawlCafeArticles, cafeInflow, resolveCafeId } from "./naver";
+import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards, publishCafe, crawlCafeArticles, cafeInflow, resolveCafeId, checkProxy } from "./naver";
 import { saveTistorySession, publishTistory, tistorySessionExists, deleteTistorySession } from "./tistory";
 import { fetchPendingJobs, updateJob, claimPendingJob, finishQueuedHistory, useQuota, refundQuota, checkPublishEntitlement, incrementDailyPublish } from "./supabase";
 import { acquireAccountLock } from "./account-lock";
@@ -185,6 +185,16 @@ app.post("/api/cafe/cancel", async (_req, res) => {
   res.json({ ok: true, closed: n });
 });
 
+/* ── 🌐 프록시 연결 확인(초록불 판정) — 나가는 IP 반환 ── */
+app.post("/api/proxy/check", async (req, res) => {
+  const finishWork = beginWork();
+  try {
+    const { sessid } = req.body || {};
+    try { res.json(await checkProxy(sessid ? String(sessid) : undefined)); }
+    catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
+  } finally { finishWork(); }
+});
+
 /* ── 📈 카페 주소 → cafeId 해석(비로그인) ── */
 app.post("/api/cafe/resolve", async (req, res) => {
   const finishWork = beginWork();
@@ -225,7 +235,7 @@ app.post("/api/cafe/inflow-cancel", async (_req, res) => {
 });
 app.post("/api/cafe/inflow", async (req, res) => {
   const finishWork = beginWork();
-  const { cafeId, cafeUrl, articles, dwellSec, repeat, randomOrder, showWindow } = req.body || {};
+  const { cafeId, cafeUrl, articles, dwellSec, repeat, randomOrder, showWindow, useProxy, proxySessid } = req.body || {};
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -242,6 +252,7 @@ app.post("/api/cafe/inflow", async (req, res) => {
       articles, dwellSec: Number(dwellSec) || 35, repeat: Number(repeat) || 1,
       randomOrder: randomOrder === true || randomOrder === "true",
       showWindow: showWindow === true || showWindow === "true",
+      proxySessid: (useProxy === true || useProxy === "true") ? (proxySessid ? String(proxySessid) : "") : undefined,
       onLog: (m) => { console.log(m); send({ type: "log", msg: m }); },
       onProgress: (done, total) => send({ type: "progress", done, total }),
       onBrowser: (b) => { activeInflowBrowsers.push(b); b.on("disconnected", () => { activeInflowBrowsers = activeInflowBrowsers.filter((x) => x !== b); }); },
