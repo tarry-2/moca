@@ -146,7 +146,11 @@ const LAUNCH_ARGS = [
   "--no-default-browser-check",
 ];
 
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+// UA는 실제 playwright 크로미움 버전·실행 OS와 맞춘다. 불일치(예: Chrome120 UA인데 실제 엔진 148, Windows UA인데 실제 맥)는
+// 네이버 리스크 엔진의 봇 탐지 신호가 된다(스토어 429 때 배운 UA/엔진 불일치 교훈).
+// ⚠️ playwright 업그레이드로 크로미움 major가 바뀌면 CHROME_MAJOR도 올려 실제 엔진과 맞춰야 한다(현재 playwright 1.60 = 크로미움 148).
+const CHROME_MAJOR = 148;
+const UA = `Mozilla/5.0 (${process.platform === "darwin" ? "Macintosh; Intel Mac OS X 10_15_7" : "Windows NT 10.0; Win64; x64"}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
 
 async function applyAntiDetection(context: BrowserContext) {
   await context.addInitScript(ANTI_DETECTION_SCRIPT);
