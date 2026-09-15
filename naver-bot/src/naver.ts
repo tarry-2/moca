@@ -812,6 +812,93 @@ export async function cafeInflow(p: CafeInflowParams): Promise<{ ok: number; tot
   } catch (e) { await browser.close().catch(() => {}); throw e; }
 }
 
+/* ═══════════════ 💬 활동·등업 (STEP3, MOCA) ═══════════════
+   육성 계정으로 카페 글에 좋아요(공감)·댓글 + 출석. 로그인 필요(육성 계정). 사람처럼 천천히·텀.
+   ⚠️ 셀렉터는 추정 → 진단로그+창보기로 첫 실행 구조 파악 후 교정. 과하면 밴 → 소량·안전. */
+export interface CafeActivityParams {
+  userId: string; cafeId: string; cafeUrl?: string;
+  articles: { articleId: string; subject: string; url: string }[];
+  doLike?: boolean; doComment?: boolean; commentTexts?: string[];
+  attendMenuUrl?: string; // 출석부 URL(있으면 출석 시도)
+  perActionMinSec?: number; showWindow?: boolean;
+  onLog?: (m: string) => void;
+  onProgress?: (done: number, total: number) => void;
+  onShot?: (caption: string, dataUrl: string) => void;
+  onBrowser?: (b: import("playwright").Browser) => void;
+  isCancelled?: () => boolean;
+}
+export async function cafeActivity(p: CafeActivityParams): Promise<{ liked: number; commented: number; attended: boolean; total: number }> {
+  const { userId, articles, doLike = false, doComment = false, commentTexts = [], attendMenuUrl, perActionMinSec = 8, showWindow = false, onLog = console.log, onProgress, onShot, onBrowser, isCancelled } = p;
+  const { browser, page } = await openCafeContext(userId, showWindow);
+  onBrowser?.(browser);
+  onLog(`[활동] 🔑 로그인 계정(${userId})으로 활동 — 사람처럼 천천히`);
+  const wait = (min: number, max: number) => page.waitForTimeout(min + Math.floor(Math.random() * (max - min))).catch(() => {});
+  const shot = async (cap: string) => { if (!onShot) return; try { const b = await page.screenshot({ type: "jpeg", quality: 55 }); onShot(cap, `data:image/jpeg;base64,${b.toString("base64")}`); } catch {} };
+  let liked = 0, commented = 0, attended = false;
+  const total = articles.length;
+  try {
+    // 출석(있으면 1회)
+    if (attendMenuUrl) {
+      try {
+        onLog(`[활동] 📅 출석부 방문: ${attendMenuUrl}`);
+        await page.goto(attendMenuUrl, { waitUntil: "domcontentloaded", timeout: 30000 }); await wait(1500, 2500);
+        const r = await page.evaluate(() => {
+          const vis = (el: Element) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+          const btn = [...document.querySelectorAll("button,a")].find((e) => vis(e) && /출석(체크|하기)?|출첵/.test((e.textContent || "").replace(/\s/g, "")) && (e.textContent || "").length < 12);
+          if (btn) { (btn as HTMLElement).click(); return true; } return false;
+        });
+        attended = r; onLog(r ? "[활동] ✅ 출석 버튼 클릭" : "[활동] ⚠️ 출석 버튼 못 찾음(카페마다 다름 — URL/DOM 확인 필요)");
+        await shot("출석 시도"); await wait(1200, 2000);
+      } catch (e: any) { onLog(`[활동] 출석 실패: ${String(e?.message || e).slice(0, 60)}`); }
+    }
+    let done = 0;
+    for (const a of articles) {
+      if (isCancelled?.()) { onLog("[활동] 🛑 취소됨"); break; }
+      onLog(`[활동] (${done + 1}/${total}) 글 열기: ${a.subject.slice(0, 30)}`);
+      try {
+        await page.goto(a.url, { waitUntil: "domcontentloaded", timeout: 30000 }); await wait(1500, 3000);
+        await page.mouse.wheel(0, 800).catch(() => {}); await wait(800, 1500);
+        // 좋아요(공감)
+        if (doLike) {
+          const r = await page.evaluate(() => {
+            const vis = (el: Element) => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+            const cand = [...document.querySelectorAll("button,a")].find((e) => vis(e) && /좋아요|공감|like/i.test((e.getAttribute("aria-label") || "") + (e.className || "") + (e.textContent || "")) && (e.textContent || "").replace(/\s/g, "").length < 10);
+            if (cand) { const pressed = cand.getAttribute("aria-pressed") === "true" || /on|active|selected/.test(cand.className); if (!pressed) { (cand as HTMLElement).click(); return "clicked"; } return "already"; } return "notfound";
+          });
+          if (r === "clicked") { liked++; onLog("[활동] 👍 좋아요 클릭"); }
+          else onLog(r === "already" ? "[활동] 👍 이미 좋아요됨" : "[활동] ⚠️ 좋아요 버튼 못 찾음(진단 필요)");
+          await wait(1000, 2000);
+        }
+        // 댓글
+        if (doComment && commentTexts.length) {
+          const text = commentTexts[Math.floor(Math.random() * commentTexts.length)];
+          const boxSel = ["textarea.comment_inbox_text", ".comment_inbox textarea", "textarea[placeholder*='댓글']", ".CommentWriter textarea", "[contenteditable=true].comment"];
+          let typed = false;
+          for (const sel of boxSel) {
+            const el = page.locator(sel).first();
+            if (await el.count().catch(() => 0)) { try { await el.click({ timeout: 3000 }); await el.type(text, { delay: 40 }); typed = true; onLog(`[활동] 💬 댓글 입력: ${text.slice(0, 20)}`); break; } catch {} }
+          }
+          if (typed) {
+            await wait(800, 1500);
+            const posted = await page.evaluate(() => {
+              const vis = (el: Element) => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+              const btn = [...document.querySelectorAll("button,a")].find((e) => vis(e) && /^(등록|댓글등록|입력)$/.test((e.textContent || "").trim()));
+              if (btn) { (btn as HTMLElement).click(); return true; } return false;
+            });
+            if (posted) { commented++; onLog("[활동] ✅ 댓글 등록"); } else onLog("[활동] ⚠️ 댓글 등록버튼 못 찾음(진단 필요)");
+            await shot("댓글 시도");
+          } else onLog("[활동] ⚠️ 댓글 입력창 못 찾음(카페 댓글 DOM 확인 필요)");
+          await wait(1000, 2000);
+        }
+      } catch (e: any) { onLog(`[활동] ⚠️ 글 활동 실패: ${String(e?.message || e).slice(0, 60)}`); }
+      done++; onProgress?.(done, total);
+      await wait(perActionMinSec * 1000, (perActionMinSec + 6) * 1000); // 글 사이 텀(사람처럼)
+    }
+    await browser.close();
+    return { liked, commented, attended, total };
+  } catch (e) { await browser.close().catch(() => {}); throw e; }
+}
+
 // ☕ 카페 글 발행 — 진단로그+창보기+단계별 캡처. 첫 실행 때 에디터 구조를 로그로 파악해 교정.
 export interface PublishCafeParams {
   userId: string;

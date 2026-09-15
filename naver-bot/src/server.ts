@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards, publishCafe, crawlCafeArticles, cafeInflow, resolveCafeId, checkProxy } from "./naver";
+import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards, publishCafe, crawlCafeArticles, cafeInflow, resolveCafeId, checkProxy, cafeActivity } from "./naver";
 import { saveTistorySession, publishTistory, tistorySessionExists, deleteTistorySession } from "./tistory";
 import { fetchPendingJobs, updateJob, claimPendingJob, finishQueuedHistory, useQuota, refundQuota, checkPublishEntitlement, incrementDailyPublish } from "./supabase";
 import { acquireAccountLock } from "./account-lock";
@@ -262,6 +262,48 @@ app.post("/api/cafe/inflow", async (req, res) => {
   } catch (e: any) {
     send({ type: "done", success: false, error: e.message });
   } finally { res.end(); finishWork(); }
+});
+
+/* ── 💬 활동·등업: 좋아요·댓글·출석(SSE). 독립 브라우저·독립 취소 ── */
+let activeActivityBrowsers: import("playwright").Browser[] = [];
+let activityCancelled = false;
+app.post("/api/cafe/activity-cancel", async (_req, res) => {
+  activityCancelled = true;
+  const n = activeActivityBrowsers.length;
+  for (const b of activeActivityBrowsers) { try { await b.close(); } catch {} }
+  activeActivityBrowsers = [];
+  res.json({ ok: true, closed: n });
+});
+app.post("/api/cafe/activity", async (req, res) => {
+  const finishWork = beginWork();
+  const { userId, cafeId, cafeUrl, articles, doLike, doComment, commentTexts, attendMenuUrl, perActionMinSec, showWindow } = req.body || {};
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  (res as any).flushHeaders?.();
+  const send = (o: object) => { try { res.write(`data: ${JSON.stringify(o)}\n\n`); } catch {} };
+  if (!userId || !cafeId || !Array.isArray(articles) || !articles.length) {
+    send({ type: "done", success: false, error: "userId, cafeId, articles 필요" }); res.end(); finishWork(); return;
+  }
+  activityCancelled = false;
+  try {
+    const r = await cafeActivity({
+      userId, cafeId, cafeUrl, articles,
+      doLike: doLike === true || doLike === "true",
+      doComment: doComment === true || doComment === "true",
+      commentTexts: Array.isArray(commentTexts) ? commentTexts : [],
+      attendMenuUrl: attendMenuUrl || undefined,
+      perActionMinSec: Number(perActionMinSec) || 8,
+      showWindow: showWindow === true || showWindow === "true",
+      onLog: (m) => { console.log(m); send({ type: "log", msg: m }); },
+      onProgress: (done, total) => send({ type: "progress", done, total }),
+      onShot: (caption, dataUrl) => send({ type: "shot", caption, dataUrl }),
+      onBrowser: (b) => { activeActivityBrowsers.push(b); b.on("disconnected", () => { activeActivityBrowsers = activeActivityBrowsers.filter((x) => x !== b); }); },
+      isCancelled: () => activityCancelled,
+    });
+    send({ type: "done", success: true, ...r });
+  } catch (e: any) { send({ type: "done", success: false, error: e.message }); }
+  finally { res.end(); finishWork(); }
 });
 
 /* ── ☕ 카페: 글 발행(SSE 실시간 스트리밍) ──
