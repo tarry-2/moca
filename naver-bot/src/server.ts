@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards, publishCafe, crawlCafeArticles, cafeInflow, resolveCafeId, checkProxy, cafeActivity } from "./naver";
+import { saveNaverSession, publishNaver, activateNaverAccount, naverSessionExists, generateFlowImages, generateFlowImagesCDP, getNaverCategories, saveGoogleSession, googleSessionExists, deleteNaverSession, deleteGoogleSession, getMyCafes, getCafeBoards, publishCafe, crawlCafeArticles, cafeInflow, resolveCafeId, checkProxy, cafeActivity, cafeManageInfo } from "./naver";
 import { saveTistorySession, publishTistory, tistorySessionExists, deleteTistorySession } from "./tistory";
 import { fetchPendingJobs, updateJob, claimPendingJob, finishQueuedHistory, useQuota, refundQuota, checkPublishEntitlement, incrementDailyPublish } from "./supabase";
 import { acquireAccountLock } from "./account-lock";
@@ -183,6 +183,20 @@ app.post("/api/cafe/cancel", async (_req, res) => {
   for (const b of activeCafeBrowsers) { try { await b.close(); } catch {} }
   activeCafeBrowsers = [];
   res.json({ ok: true, closed: n });
+});
+
+/* ── 🛡️ 내 카페 관리: 현황(회원·가입신청·신고·최근글) 크롤 ── */
+app.post("/api/cafe/manage-info", async (req, res) => {
+  const finishWork = beginWork();
+  try {
+    const { userId, cafeId, cafeUrl } = req.body || {};
+    if (!userId || !cafeId) return res.status(400).json({ error: "userId, cafeId 필요" });
+    const logs: string[] = [];
+    try {
+      const info = await cafeManageInfo(userId, cafeId, cafeUrl || "", (m) => { logs.push(m); console.log(m); });
+      res.json({ ok: true, info, logs });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e.message, logs }); }
+  } finally { finishWork(); }
 });
 
 /* ── 🌐 프록시 연결 확인(초록불 판정) — 나가는 IP 반환 ── */

@@ -812,6 +812,63 @@ export async function cafeInflow(p: CafeInflowParams): Promise<{ ok: number; tot
   } catch (e) { await browser.close().catch(() => {}); throw e; }
 }
 
+/* ═══════════════ 🛡️ 내 카페 관리 (STEP2, MOCA) ═══════════════
+   내가 운영(매니저)하는 카페의 회원 수·가입신청·신고글·최근글을 모니터링. 로그인 필요.
+   response 가로채기로 cafe-web JSON을 모아 유연 파싱(구조는 실측 교정). 관리 액션(승인/등업)은
+   권한 API라 실측 후 추가 — 지금은 '현황 보기'(읽기) 중심 + 진단로그. */
+export interface CafeManageInfo {
+  memberCount?: number;
+  joinRequests: { id?: string; nick?: string; date?: string }[];
+  reports: { id?: string; subject?: string }[];
+  recentArticles: CafeArticle[];
+  diag: string[];
+}
+export async function cafeManageInfo(userId: string, cafeId: string, cafeUrl: string, onLog: (m: string) => void): Promise<CafeManageInfo> {
+  const { browser, page } = await openCafeContext(userId);
+  const captured: { url: string; j: any }[] = [];
+  page.on("response", async (res) => {
+    try {
+      const u = res.url();
+      if (!/apis\.naver\.com\/cafe-web|cafe\.naver\.com\/.*(member|manage|apply|report)/i.test(u)) return;
+      if (!(res.headers()["content-type"] || "").includes("json")) return;
+      captured.push({ url: u, j: await res.json() });
+    } catch { /* skip */ }
+  });
+  const info: CafeManageInfo = { joinRequests: [], reports: [], recentArticles: [], diag: [] };
+  try {
+    // 1) 카페 홈(멤버수·최근글) — 비공개여도 매니저 세션이면 열림
+    onLog(`[관리] 🏠 카페 현황 수집: cafeId=${cafeId}`);
+    await page.goto(`https://cafe.naver.com/ca-fe/cafes/${cafeId}`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(3000);
+    await page.mouse.wheel(0, 2500).catch(() => {}); await page.waitForTimeout(1500);
+    // 2) 관리 홈(가입신청·신고 — 매니저만)
+    for (const u of [
+      `https://cafe.naver.com/ca-fe/cafes/${cafeId}/managements/members`,
+      `https://cafe.naver.com/ca-fe/cafes/${cafeId}/managements`,
+    ]) {
+      try { await page.goto(u, { waitUntil: "domcontentloaded", timeout: 20000 }); await page.waitForTimeout(2500); } catch {}
+    }
+    // 최근글
+    info.recentArticles = parseCafeArticles(captured, cafeId).slice(0, 30);
+    // 멤버수/가입신청/신고를 캡처 JSON에서 유연 탐색
+    const visit = (node: any) => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) { node.forEach(visit); return; }
+      if (info.memberCount == null) { const mc = node.memberCount ?? node.memberCnt ?? node.totalMemberCount; if (typeof mc === "number" && mc > 0) info.memberCount = mc; }
+      // 가입신청 후보
+      const nick = node.nickname ?? node.nickName ?? node.memberNickname;
+      if (nick && (node.applyDate || node.applicationDate || node.waitingYn || node.status === "WAIT")) info.joinRequests.push({ id: String(node.memberId ?? node.id ?? ""), nick: String(nick), date: String(node.applyDate ?? node.applicationDate ?? "") });
+      for (const k in node) visit(node[k]);
+    };
+    captured.forEach((c) => visit(c.j));
+    info.diag = captured.map((c) => c.url.split("?")[0]).slice(0, 12);
+    onLog(`[관리] 수집 완료 — 멤버 ${info.memberCount ?? "?"} · 가입신청 ${info.joinRequests.length} · 최근글 ${info.recentArticles.length} · 응답 ${captured.length}건`);
+    if (!info.recentArticles.length && info.memberCount == null) onLog(`[관리] ⚠️ 데이터 적음 — 응답 구조 확인 필요(진단: ${info.diag.join(" ").slice(0, 200)})`);
+    await browser.close();
+    return info;
+  } catch (e) { await browser.close().catch(() => {}); throw e; }
+}
+
 /* ═══════════════ 💬 활동·등업 (STEP3, MOCA) ═══════════════
    육성 계정으로 카페 글에 좋아요(공감)·댓글 + 출석. 로그인 필요(육성 계정). 사람처럼 천천히·텀.
    ⚠️ 셀렉터는 추정 → 진단로그+창보기로 첫 실행 구조 파악 후 교정. 과하면 밴 → 소량·안전. */

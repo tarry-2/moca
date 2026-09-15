@@ -10,6 +10,7 @@ import FlowTab from "./components/FlowTab";
 import InflowTab from "./components/InflowTab";
 import PromoTab from "./components/PromoTab";
 import ActivityTab from "./components/ActivityTab";
+import ManageTab from "./components/ManageTab";
 import PasswordInput from "./components/PasswordInput";
 import { useLog, type UseLog } from "./lib/useLog";
 
@@ -149,11 +150,12 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
   const inflowLog = useLog();
   const promoLog = useLog();
   const activityLog = useLog();
+  const manageLog = useLog();
   const [showWindow, setShowWindow] = useState(false);
   const [tab, setTab] = useState("write");
-  const logByTab: Record<string, UseLog> = { write: writeLog, accounts: acctLog, flow: flowLog, inflow: inflowLog, promo: promoLog, activity: activityLog };
+  const logByTab: Record<string, UseLog> = { write: writeLog, accounts: acctLog, flow: flowLog, inflow: inflowLog, promo: promoLog, activity: activityLog, manage: manageLog };
   const activeLog = logByTab[tab] || writeLog;
-  const logTitle = tab === "inflow" ? "유입 로그" : tab === "promo" ? "홍보 로그" : tab === "activity" ? "활동 로그" : tab === "flow" ? "플로우 로그" : tab === "accounts" ? "계정 로그" : "발행 로그";
+  const logTitle = tab === "inflow" ? "유입 로그" : tab === "promo" ? "홍보 로그" : tab === "activity" ? "활동 로그" : tab === "manage" ? "관리 로그" : tab === "flow" ? "플로우 로그" : tab === "accounts" ? "계정 로그" : "발행 로그";
   const [selectedAccs, setSelectedAccs] = useState<Set<string>>(new Set());
   const toggleAcc = (id: string) =>
     setSelectedAccs((prev) => {
@@ -226,7 +228,10 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
           <div style={{ display: tab === "activity" ? "block" : "none" }}>
             <ActivityTab selected={selectedAccs} log={activityLog} showWindow={showWindow} />
           </div>
-          {!["write", "accounts", "flow", "inflow", "promo", "activity"].includes(tab) && (
+          <div style={{ display: tab === "manage" ? "block" : "none" }}>
+            <ManageTab selected={selectedAccs} log={manageLog} />
+          </div>
+          {!["write", "accounts", "flow", "inflow", "promo", "activity", "manage"].includes(tab) && (
             <p style={{ color: "var(--m-sub)", fontSize: 13, lineHeight: 1.6 }}>이 기능은 준비 중이에요 (STEP 로드맵 순서대로 구현).</p>
           )}
         </div>
