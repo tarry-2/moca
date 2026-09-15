@@ -185,38 +185,42 @@ app.post("/api/cafe/cancel", async (_req, res) => {
   res.json({ ok: true, closed: n });
 });
 
-/* ── ☕ 카페: 글 발행(진단 모드) ── */
+/* ── ☕ 카페: 글 발행(SSE 실시간 스트리밍) ──
+   봇의 onLog/onShot을 발행 진행 중 실시간으로 흘려보낸다(발행 끝나야 한 번에 오던 것 개선). */
 app.post("/api/cafe/publish", async (req, res) => {
   const finishWork = beginWork();
+  const { userId, cafeId, cafeUrl, menuId, title, greeting, body, links, onPartnerProducts, faq, hashtags, imgCount, imgPrompts, flowSlots, draftOnly, publishOptions, showWindow } = req.body || {};
+  // SSE 헤더
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  (res as any).flushHeaders?.();
+  const send = (o: object) => { try { res.write(`data: ${JSON.stringify(o)}\n\n`); } catch {} };
+  if (!userId || !cafeId || !menuId || !title || !body) {
+    send({ type: "done", success: false, error: "userId, cafeId, menuId, title, body 필요" });
+    res.end(); finishWork(); return;
+  }
+  cafeCancelled = false; // 새 발행 시작 → 취소 플래그 리셋
   try {
-    const { userId, cafeId, cafeUrl, menuId, title, greeting, body, links, onPartnerProducts, faq, hashtags, imgCount, imgPrompts, flowSlots, draftOnly, publishOptions, showWindow } = req.body || {};
-    if (!userId || !cafeId || !menuId || !title || !body) {
-      return res.status(400).json({ success: false, error: "userId, cafeId, menuId, title, body 필요" });
-    }
-    const logs: string[] = [];
-    const shots: { caption: string; dataUrl: string }[] = [];
-    cafeCancelled = false; // 새 발행 시작 → 취소 플래그 리셋
-    try {
-      const r = await publishCafe({
-        userId, cafeId, cafeUrl, menuId, title, greeting, body, links,
-        onPartnerProducts: Array.isArray(onPartnerProducts) ? onPartnerProducts : [],
-        publishOptions: publishOptions && typeof publishOptions === "object" ? publishOptions : undefined,
-        faq, hashtags,
-        imgCount: Number(imgCount) || 0,
-        imgPrompts: Array.isArray(imgPrompts) ? imgPrompts : [],
-        flowSlots: Array.isArray(flowSlots) ? flowSlots : [],
-        draftOnly: draftOnly === true || draftOnly === "true",
-        showWindow: showWindow === true || showWindow === "true",
-        onLog: (m) => { logs.push(m); console.log(m); },
-        onShot: (caption, dataUrl) => { shots.push({ caption, dataUrl }); },
-        onBrowser: (b) => { activeCafeBrowsers.push(b); b.on("disconnected", () => { activeCafeBrowsers = activeCafeBrowsers.filter(x => x !== b); }); },
-        isCancelled: () => cafeCancelled, // 취소됐는지 봇이 확인(이미지 생성 후 발행 전 체크)
-      });
-      res.json({ success: true, url: r.url, logs, shots });
-    } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message, logs, shots });
-    }
-  } finally { finishWork(); }
+    const r = await publishCafe({
+      userId, cafeId, cafeUrl, menuId, title, greeting, body, links,
+      onPartnerProducts: Array.isArray(onPartnerProducts) ? onPartnerProducts : [],
+      publishOptions: publishOptions && typeof publishOptions === "object" ? publishOptions : undefined,
+      faq, hashtags,
+      imgCount: Number(imgCount) || 0,
+      imgPrompts: Array.isArray(imgPrompts) ? imgPrompts : [],
+      flowSlots: Array.isArray(flowSlots) ? flowSlots : [],
+      draftOnly: draftOnly === true || draftOnly === "true",
+      showWindow: showWindow === true || showWindow === "true",
+      onLog: (m) => { console.log(m); send({ type: "log", msg: m }); },
+      onShot: (caption, dataUrl) => { send({ type: "shot", caption, dataUrl }); },
+      onBrowser: (b) => { activeCafeBrowsers.push(b); b.on("disconnected", () => { activeCafeBrowsers = activeCafeBrowsers.filter(x => x !== b); }); },
+      isCancelled: () => cafeCancelled,
+    });
+    send({ type: "done", success: true, url: r.url });
+  } catch (e: any) {
+    send({ type: "done", success: false, error: e.message });
+  } finally { res.end(); finishWork(); }
 });
 
 /* ── Google 세션 상태 확인 ── */

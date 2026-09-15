@@ -1,7 +1,7 @@
 // 📝 카페 글쓰기·발행 — 계정선택 → 카페선택 → 게시판선택 → 키워드 → AI글 → 발행
 // 카페 목록/게시판은 봇 필요(데스크톱 앱). AI 글 생성은 웹에서도 됨(Gemini 직접).
 import { useState, useRef } from "react";
-import { botFetch, BOT_BASE } from "../lib/botApi";
+import { botFetch, BOT_BASE, BotEventStream } from "../lib/botApi";
 import { getGeminiKeys, setGeminiKeys, generateCafePost } from "../lib/gemini";
 import { listFlowAccounts } from "../lib/flowAccounts";
 import type { UseLog } from "../lib/useLog";
@@ -73,7 +73,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const stopRef = useRef(false);   // 취소
   const pauseRef = useRef(false);  // 정지
   const resumeIdxRef = useRef(0);  // 이어가기 시작 인덱스
-  const abortRef = useRef<AbortController | null>(null); // 진행 중 봇 요청 즉시 중단용
+  const streamRef = useRef<BotEventStream | null>(null); // 진행 중 발행 SSE 스트림(정지/취소 시 close)
   // ⏰ 예약·텀(간격) — 앱 켜둔 상태 예약. 텀=밴 방지(연속 도배 금지)
   const [useSchedule, setUseSchedule] = useState(false);
   const [scheduleAt, setScheduleAt] = useState(""); // datetime-local
@@ -249,22 +249,38 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
     if (links.length) log.push(`링크 삽입: ${links.map(l => l.name).join(", ")}`, "info", cafeName);
     if (imgCount > 0) log.push(`이미지: 플로우 계정 ${flowSlots.length}개로 ${imgCount}장 생성(소진 시 다음 계정)`, "info", cafeName);
     log.push(`창보기 ${showWindowState ? "ON(크롬 창 뜸)" : "OFF(백그라운드+캡처)"}`, "progress");
-    try {
-      const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        // greeting=인사말(맨 위), body=본문(글·이미지 번갈아), links=온파트너/내링크, faq=질문형식(맨 아래).
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, onPartnerProducts, faq, hashtags, imgCount, imgPrompts, flowSlots, draftOnly, publishOptions: pubOpts, showWindow: showWindowState }),
+    const ok = await runPublishStream({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, onPartnerProducts, faq, hashtags, imgCount, imgPrompts, flowSlots, draftOnly, publishOptions: pubOpts, showWindow: showWindowState });
+    void ok;
+    setBusy(null);
+  }
+
+  // 🔴 발행 1건을 SSE로 실행 — 봇의 onLog/onShot을 실시간으로 받아 화면 로그/캡처에 즉시 반영(발행 끝나야 오던 것 개선).
+  //    done 이벤트에서 성공 여부로 resolve. 정지/취소는 streamRef.current.close()로 스트림을 끊는다.
+  function runPublishStream(payload: object): Promise<boolean> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (okv: boolean) => { if (settled) return; settled = true; streamRef.current = null; resolve(okv); };
+      const es = new BotEventStream(`${BOT_BASE}/api/cafe/publish`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
       });
-      const d = await res.json();
-      // 봇 진단 로그를 화면 로그로
-      (d.logs || []).forEach((m: string) => log.push(m, m.includes("⚠️") ? "warn" : m.includes("실패") || m.includes("오류") ? "error" : "info", cafeName));
-      // 단계별 캡처
-      (d.shots || []).forEach((s: any) => log.shot(s.caption, s.dataUrl, cafeName));
-      if (d.success) log.push(`발행 결과: ${d.url}`, "success", cafeName);
-      else log.push(`발행 실패: ${d.error || "알 수 없음"}`, "error", cafeName);
-    } catch (e: any) {
-      log.push(`봇 연결 실패: ${e?.message || e} (데스크톱 앱에서 실행 필요)`, "error", cafeName);
-    } finally { setBusy(null); }
+      streamRef.current = es;
+      es.onmessage = (ev) => {
+        let d: any; try { d = JSON.parse(ev.data); } catch { return; }
+        if (d.type === "log") {
+          const m = String(d.msg || "");
+          const type = m.includes("⚠️") ? "warn" : (m.includes("실패") || m.includes("오류") || m.includes("❌")) ? "error" : (m.includes("🎉") || m.includes("✅")) ? "success" : "info";
+          log.push(m, type, cafeName);
+        } else if (d.type === "shot") {
+          log.shot(d.caption, d.dataUrl, cafeName);
+        } else if (d.type === "done") {
+          if (d.success) log.push(`✅ 발행 완료: ${d.url}`, "success", cafeName);
+          else log.push(`발행 실패: ${d.error || "?"}`, "error", cafeName);
+          es.close(); finish(!!d.success);
+        }
+      };
+      es.onerror = () => { log.push("봇 연결 오류 (데스크톱 앱에서 실행 필요)", "error", cafeName); finish(false); };
+      es.onclose = () => finish(false);
+    });
   }
 
   // 발행 1건 요청(순차 발행에서 재사용). 성공 여부 반환.
@@ -278,22 +294,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       flowSlots = fa.filter(a => a.connected).map(a => a.slot ?? 0);
       imgPrompts = buildImgPrompts(imgCount, kw);
     }
-    try {
-      abortRef.current = new AbortController();
-      const res = await botFetch(`${BOT_BASE}/api/cafe/publish`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        signal: abortRef.current.signal,
-        body: JSON.stringify({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title: post.title, greeting: useGreeting ? savedGreeting : "", body: post.body, links, onPartnerProducts, faq: post.faq, hashtags: post.hashtags, imgCount, imgPrompts, flowSlots, draftOnly, publishOptions: pubOpts, showWindow: showWindowState }),
-      });
-      const d = await res.json();
-      (d.logs || []).forEach((m: string) => log.push(m, m.includes("⚠️") ? "warn" : (m.includes("실패") || m.includes("오류")) ? "error" : "info", cafeName));
-      (d.shots || []).forEach((s: any) => log.shot(s.caption, s.dataUrl, cafeName));
-      if (d.success) { log.push(`✅ 발행 완료: ${d.url}`, "success", cafeName); return true; }
-      log.push(`발행 실패: ${d.error || "?"}`, "error", cafeName); return false;
-    } catch (e: any) {
-      if (e?.name === "AbortError") { log.push("🛑 발행 즉시 중단됨", "warn", cafeName); return false; }
-      log.push(`봇 연결 실패: ${e?.message || e}`, "error", cafeName); return false;
-    } finally { abortRef.current = null; }
+    return runPublishStream({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title: post.title, greeting: useGreeting ? savedGreeting : "", body: post.body, links, onPartnerProducts, faq: post.faq, hashtags: post.hashtags, imgCount, imgPrompts, flowSlots, draftOnly, publishOptions: pubOpts, showWindow: showWindowState });
   }
 
   // 중단 가능한 대기(1초마다 취소/정지 체크). 취소=false 반환(중단), 완료=true.
@@ -661,7 +662,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
             style={{ gridColumn: "1/3", background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 9, padding: "13px", fontSize: 15, fontWeight: 800, cursor: runState !== "idle" ? "default" : "pointer", opacity: runState !== "idle" ? 0.5 : 1 }}>
             ▶ 발행 시작
           </button>
-          <button className="moca-w-btn" disabled={runState !== "running"} onClick={() => { pauseRef.current = true; abortRef.current?.abort(); botFetch(`${BOT_BASE}/api/cafe/cancel`, { method: "POST" }).catch(() => {}); log.push("⏸ 정지 — 진행 중 글 중단(이어가기로 이 글부터 다시)", "warn"); }}
+          <button className="moca-w-btn" disabled={runState !== "running"} onClick={() => { pauseRef.current = true; streamRef.current?.close(); botFetch(`${BOT_BASE}/api/cafe/cancel`, { method: "POST" }).catch(() => {}); log.push("⏸ 정지 — 진행 중 글 중단(이어가기로 이 글부터 다시)", "warn"); }}
             style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 9, padding: "11px", fontSize: 14, fontWeight: 700, cursor: runState !== "running" ? "default" : "pointer", opacity: runState !== "running" ? 0.5 : 1 }}>
             ⏸ 정지
           </button>
@@ -669,7 +670,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
             style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 9, padding: "11px", fontSize: 14, fontWeight: 700, cursor: runState !== "paused" ? "default" : "pointer", opacity: runState !== "paused" ? 0.5 : 1 }}>
             ⏭ 이어가기
           </button>
-          <button className="moca-w-btn" disabled={runState === "idle"} onClick={() => { stopRef.current = true; pauseRef.current = false; abortRef.current?.abort(); botFetch(`${BOT_BASE}/api/cafe/cancel`, { method: "POST" }).catch(() => {}); setRunState("idle"); setWaitInfo(""); log.push("🛑 즉시 취소됨 (봇 크롬도 종료)", "error"); }}
+          <button className="moca-w-btn" disabled={runState === "idle"} onClick={() => { stopRef.current = true; pauseRef.current = false; streamRef.current?.close(); botFetch(`${BOT_BASE}/api/cafe/cancel`, { method: "POST" }).catch(() => {}); setRunState("idle"); setWaitInfo(""); log.push("🛑 즉시 취소됨 (봇 크롬도 종료)", "error"); }}
             style={{ gridColumn: "1/3", background: runState === "idle" ? "var(--m-tabhover)" : "var(--m-log-error)", color: runState === "idle" ? "var(--m-sub)" : "#fff", border: "none", borderRadius: 9, padding: "11px", fontSize: 14, fontWeight: 700, cursor: runState === "idle" ? "default" : "pointer" }}>
             🛑 취소 (즉시)
           </button>
