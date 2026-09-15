@@ -2,47 +2,69 @@
 // 모델 순서(확정): 2.5-flash 우선 → MAX_TOKENS면 다음 모델 fallback. 2.5는 thinkingBudget:0.
 const MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest"];
 
-export function getGeminiKey(): string {
-  return localStorage.getItem("moca_gemini_key") || "";
+// 🔑 키 여러 개 지원: 위 키부터 모델 순서대로 쓰다가 그 키의 모든 모델이 사용량 소진(429)되면 다음 키로 자동 전환.
+export function getGeminiKeys(): string[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem("moca_gemini_keys") || "[]");
+    if (Array.isArray(arr) && arr.length) return arr.map((s: any) => String(s).trim()).filter(Boolean);
+  } catch { /* fall through */ }
+  const single = (localStorage.getItem("moca_gemini_key") || "").trim();
+  return single ? [single] : [];
 }
-export function setGeminiKey(k: string): void {
-  localStorage.setItem("moca_gemini_key", k.trim());
+export function setGeminiKeys(keys: string[]): void {
+  const clean = keys.map((k) => k.trim()).filter(Boolean);
+  localStorage.setItem("moca_gemini_keys", JSON.stringify(clean));
+  localStorage.setItem("moca_gemini_key", clean[0] || ""); // 하위호환(단일 키 경로)
 }
+// 하위호환 단일 키 API (첫 번째 키)
+export function getGeminiKey(): string { return getGeminiKeys()[0] || ""; }
+export function setGeminiKey(k: string): void { setGeminiKeys(k.trim() ? [k.trim()] : []); }
 
 export async function generateText(prompt: string, onLog?: (m: string) => void): Promise<string> {
-  const key = getGeminiKey();
-  if (!key) throw new Error("Gemini API 키가 없어요 (글쓰기 상단에서 입력해 주세요)");
+  const keys = getGeminiKeys();
+  if (!keys.length) throw new Error("Gemini API 키가 없어요 (글쓰기 상단에서 입력해 주세요)");
   let lastErr = "";
-  for (const model of MODELS) {
-    try {
-      const generationConfig: any = { maxOutputTokens: 8192, temperature: 0.9 };
-      if (model.startsWith("gemini-2.5")) generationConfig.thinkingConfig = { thinkingBudget: 0 };
-      onLog?.(`AI 요청: ${model}`);
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig }),
-      });
-      if (!r.ok) {
-        lastErr = `${model} HTTP ${r.status}`;
-        onLog?.(`${model} 실패(${r.status}) → 다음 모델`);
-        continue;
+  for (let ki = 0; ki < keys.length; ki++) {
+    const key = keys[ki];
+    const tag = keys.length > 1 ? `[키 ${ki + 1}/${keys.length}] ` : "";
+    for (const model of MODELS) {
+      try {
+        const generationConfig: any = { maxOutputTokens: 8192, temperature: 0.9 };
+        if (model.startsWith("gemini-2.5")) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+        onLog?.(`${tag}AI 요청: ${model}`);
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig }),
+        });
+        if (r.status === 429) { // 사용량 소진(rate/quota) — 이 모델 건너뛰고, 다 소진되면 아래에서 다음 키로
+          lastErr = `${tag}${model} 사용량 소진(429)`;
+          onLog?.(`${tag}${model} 사용량 소진(429) → 다음 모델`);
+          continue;
+        }
+        if (!r.ok) {
+          lastErr = `${tag}${model} HTTP ${r.status}`;
+          onLog?.(`${tag}${model} 실패(${r.status}) → 다음 모델`);
+          continue;
+        }
+        const j = await r.json();
+        const cand = j?.candidates?.[0];
+        const text: string = (cand?.content?.parts || []).map((p: any) => p.text || "").join("");
+        if (text && cand?.finishReason === "MAX_TOKENS") {
+          onLog?.(`${tag}${model} 응답 잘림(MAX_TOKENS) → 다음 모델`);
+          continue;
+        }
+        if (text) { onLog?.(`${tag}AI 생성 완료 (${model}, ${text.length}자)`); return text; }
+        lastErr = `${tag}${model} 빈 응답`;
+      } catch (e: any) {
+        lastErr = `${tag}${model}: ${e?.message || e}`;
+        onLog?.(`${tag}${model} 오류 → 다음 모델`);
       }
-      const j = await r.json();
-      const cand = j?.candidates?.[0];
-      const text: string = (cand?.content?.parts || []).map((p: any) => p.text || "").join("");
-      if (text && cand?.finishReason === "MAX_TOKENS") {
-        onLog?.(`${model} 응답 잘림(MAX_TOKENS) → 다음 모델`);
-        continue;
-      }
-      if (text) { onLog?.(`AI 생성 완료 (${model}, ${text.length}자)`); return text; }
-      lastErr = `${model} 빈 응답`;
-    } catch (e: any) {
-      lastErr = `${model}: ${e?.message || e}`;
-      onLog?.(`${model} 오류 → 다음 모델`);
     }
+    // 이 키의 모든 모델 소진/실패 → 다음 키로
+    if (ki < keys.length - 1) onLog?.(`${tag}전체 모델 소진 → 다음 키(${ki + 2}/${keys.length})로 전환`);
   }
-  throw new Error("AI 글 생성 실패(모든 모델): " + lastErr);
+  throw new Error("AI 글 생성 실패(모든 키·모델): " + lastErr);
 }
 
 // 카페 글: 제목 + 본문(body) + FAQ(질문형식)를 분리 생성(JSON).

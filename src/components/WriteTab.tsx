@@ -2,7 +2,7 @@
 // 카페 목록/게시판은 봇 필요(데스크톱 앱). AI 글 생성은 웹에서도 됨(Gemini 직접).
 import { useState, useRef } from "react";
 import { botFetch, BOT_BASE } from "../lib/botApi";
-import { getGeminiKey, setGeminiKey, generateCafePost } from "../lib/gemini";
+import { getGeminiKeys, setGeminiKeys, generateCafePost } from "../lib/gemini";
 import { listFlowAccounts } from "../lib/flowAccounts";
 import type { UseLog } from "../lib/useLog";
 
@@ -28,9 +28,10 @@ interface Props {
 }
 
 export default function WriteTab({ selected, log, showWindow: showWindowState }: Props) {
-  const [keyInput, setKeyInput] = useState(getGeminiKey());
-  const [keySaved, setKeySaved] = useState(!!getGeminiKey());
-  const [keyOpen, setKeyOpen] = useState(!getGeminiKey()); // 키 없으면 펼침, 있으면 접힘
+  // 🔑 Gemini 키 여러 개: 위 키부터 쓰다가 사용량 소진되면 다음 키로 자동 전환
+  const [keyInputs, setKeyInputs] = useState<string[]>(() => { const ks = getGeminiKeys(); return ks.length ? ks : [""]; });
+  const [keySaved, setKeySaved] = useState(getGeminiKeys().length > 0);
+  const [keyOpen, setKeyOpen] = useState(getGeminiKeys().length === 0); // 키 없으면 펼침, 있으면 접힘
   const [showKey, setShowKey] = useState(false); // 🔑 키 미리보기(눈) 토글
   // 불러온 카페/게시판·선택값은 localStorage 영속(탭 이동·앱 재시작에도 유지, 다시 안 불러와도 됨)
   const [cafes, setCafes] = useState<MyCafe[]>(() => { try { return JSON.parse(localStorage.getItem("moca_cafes") || "[]"); } catch { return []; } });
@@ -97,11 +98,16 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   const boardName = boards.find((b) => b.menuId === menuId)?.name || "";
 
   function saveKey() {
-    setGeminiKey(keyInput);
-    setKeySaved(!!keyInput.trim());
-    if (keyInput.trim()) setKeyOpen(false); // 저장되면 접기
-    log.push("Gemini API 키 저장됨", "info");
+    const clean = keyInputs.map((k) => k.trim()).filter(Boolean);
+    setGeminiKeys(clean);
+    setKeyInputs(clean.length ? clean : [""]);
+    setKeySaved(clean.length > 0);
+    if (clean.length) setKeyOpen(false); // 저장되면 접기
+    log.push(clean.length ? `Gemini API 키 ${clean.length}개 저장됨${clean.length > 1 ? " (위 키부터 쓰다 소진되면 다음 키로 자동 전환)" : ""}` : "Gemini 키 비움", "info");
   }
+  function updateKey(i: number, v: string) { setKeyInputs((prev) => prev.map((k, idx) => (idx === i ? v : k))); }
+  function addKey() { setKeyInputs((prev) => (prev.length >= 5 ? prev : [...prev, ""])); }
+  function removeKey(i: number) { setKeyInputs((prev) => { const n = prev.filter((_, idx) => idx !== i); return n.length ? n : [""]; }); }
   function saveGreeting() {
     const g = greeting.trim();
     localStorage.setItem("moca_greeting", g);
@@ -365,23 +371,35 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
         <div onClick={() => setKeyOpen((v) => !v)} style={{ display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none" }}>
           <span style={{ color: "var(--m-text)", fontSize: 14, fontWeight: 800 }}>
             🤖 Gemini API 키 {keySaved
-              ? <span style={{ color: "var(--m-log-success)", fontSize: 12, fontWeight: 600 }}>· ✅ 설정됨</span>
+              ? <span style={{ color: "var(--m-log-success)", fontSize: 12, fontWeight: 600 }}>· ✅ {getGeminiKeys().length}개 설정됨</span>
               : <span style={{ color: "var(--m-log-warn)", fontSize: 12, fontWeight: 600 }}>· ⚠️ 미설정</span>}
           </span>
           <span style={{ marginLeft: "auto", color: "var(--m-sub)", fontSize: 13 }}>{keyOpen ? "▲ 접기" : "▼ 펴기"}</span>
         </div>
         {keyOpen && (
           <div style={{ marginTop: 12 }}>
-            <p style={{ color: "var(--m-sub)", fontSize: 12, margin: "0 0 8px", lineHeight: 1.5 }}>AI 글 생성에 필요해요. 브라우저에만 저장되고 서버로 안 보내요.</p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <div style={{ position: "relative", flex: 1 }}>
-                <input className="moca-in" style={{ ...inputStyle, paddingRight: 42 }} type={showKey ? "text" : "password"} value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder="AIza..." />
-                <button type="button" onClick={() => setShowKey((v) => !v)} title={showKey ? "숨기기" : "보기"}
-                  style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 17, padding: "4px 6px", lineHeight: 1 }}>
-                  {showKey ? "🙈" : "👁️"}
-                </button>
+            <p style={{ color: "var(--m-sub)", fontSize: 12, margin: "0 0 8px", lineHeight: 1.5 }}>AI 글 생성에 필요해요. 브라우저에만 저장되고 서버로 안 보내요. <b style={{ color: "var(--m-sub)" }}>키를 여러 개 넣으면 위 키부터 쓰다가 사용량이 소진되면 아래 키로 자동 전환</b>돼요.</p>
+            {keyInputs.map((k, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                <span style={{ color: "var(--m-dim)", fontSize: 12, fontWeight: 700, width: 44, flexShrink: 0 }}>키 {i + 1}</span>
+                <div style={{ position: "relative", flex: 1 }}>
+                  <input className="moca-in" style={{ ...inputStyle, paddingRight: 42 }} type={showKey ? "text" : "password"} value={k} onChange={(e) => updateKey(i, e.target.value)} placeholder={i === 0 ? "AIza... (메인 키)" : "AIza... (예비 키)"} />
+                  <button type="button" onClick={() => setShowKey((v) => !v)} title={showKey ? "숨기기" : "보기"}
+                    style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 17, padding: "4px 6px", lineHeight: 1 }}>
+                    {showKey ? "🙈" : "👁️"}
+                  </button>
+                </div>
+                {keyInputs.length > 1 && (
+                  <button type="button" onClick={() => removeKey(i)} title="이 키 삭제"
+                    style={{ background: "transparent", color: "var(--m-log-error)", border: "1px solid var(--m-line2)", borderRadius: 8, padding: "8px 10px", fontSize: 13, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>🗑️</button>
+                )}
               </div>
-              <button className="moca-w-btn" onClick={saveKey} style={{ background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 8, padding: "0 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>저장</button>
+            ))}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+              {keyInputs.length < 5 && (
+                <button className="moca-w-btn" onClick={addKey} style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>➕ 키 추가</button>
+              )}
+              <button className="moca-w-btn" onClick={saveKey} style={{ marginLeft: "auto", background: "var(--m-gold)", color: "var(--m-goldink)", border: "none", borderRadius: 8, padding: "8px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>💾 저장</button>
             </div>
           </div>
         )}
