@@ -178,19 +178,23 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
           .moca-tab{border-left:none!important;white-space:nowrap}
           .moca-logwrap{height:44vh}
         }
+        @keyframes mocaLive{0%,100%{opacity:1}50%{opacity:.3}}
+        .moca-live-dot{animation:mocaLive 1.4s ease-in-out infinite}
       `}</style>
 
-      {/* 상단바 */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: "1px solid var(--m-line)", background: "var(--m-tabbar)" }}>
+      {/* 상단바 — 맥 hiddenInset: 이 영역을 드래그로 창 이동. 신호등 자리 확보 위해 좌측 패딩 넉넉히. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px 10px 82px", borderBottom: "1px solid var(--m-line)", background: "var(--m-tabbar)", WebkitAppRegion: "drag" } as React.CSSProperties}>
         <b style={{ color: "var(--m-gold)", fontSize: 18, letterSpacing: 2 }}>☕ MOCA</b>
         <span style={{ color: "var(--m-dim)", fontSize: 12 }}>네이버 카페 자동화 · 관리자</span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--m-log-success)" }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--m-log-success)", display: "inline-block" }} />봇 대기
+          <span className="moca-live-dot" style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--m-log-success)", display: "inline-block", boxShadow: "0 0 6px var(--m-log-success)" }} />봇 대기
         </span>
-        <ThemeToggle theme={theme} onToggle={onToggleTheme} />
-        <button className="moca-ghost" onClick={onLogout} style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-          로그아웃
-        </button>
+        <div style={{ WebkitAppRegion: "no-drag", display: "flex", alignItems: "center", gap: 10 } as React.CSSProperties}>
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+          <button className="moca-ghost" onClick={onLogout} style={{ background: "var(--m-tabhover)", color: "var(--m-text)", border: "1px solid var(--m-line2)", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            로그아웃
+          </button>
+        </div>
       </div>
 
       {/* 본문 3분할 */}
