@@ -260,6 +260,7 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
         <p style={{ color: "var(--m-sub)", fontSize: 12.5, margin: 0, lineHeight: 1.6 }}>
           📈 <b style={{ color: "var(--m-text)" }}>카페 유입·조회수</b> — 발행과 <b style={{ color: "var(--m-gold)" }}>따로 동시에</b> 돌아가요.
           유입 방문은 <b style={{ color: "var(--m-gold)" }}>🔓 비로그인(익명)</b>이라 계정 보호조치 위험이 없어요.
+          <br />🚪 <b style={{ color: "var(--m-text)" }}>유입경로 자동 다양화</b> — 네이버검색·카페내부·카페앱·구글·다음·SNS·직접입력 등으로 <b style={{ color: "var(--m-gold)" }}>흩어서 방문</b>해요. 여러 곳에서 <b style={{ color: "var(--m-gold)" }}>인용·공유되는 인기글</b>처럼 보여야 <b style={{ color: "var(--m-gold)" }}>카페 홈판·네이버 모바일 메인</b>에 노출돼요(통계 유입경로도 사람처럼 흩어짐).
           <br /><span style={{ color: "var(--m-log-warn)" }}>⚠️ 밴 방지</span> — 체류를 넉넉히, 한 번에 너무 많이 돌리지 마세요.
         </p>
       </div>

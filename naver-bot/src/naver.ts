@@ -151,6 +151,8 @@ const LAUNCH_ARGS = [
 // ⚠️ playwright 업그레이드로 크로미움 major가 바뀌면 CHROME_MAJOR도 올려 실제 엔진과 맞춰야 한다(현재 playwright 1.60 = 크로미움 148).
 const CHROME_MAJOR = 148;
 const UA = `Mozilla/5.0 (${process.platform === "darwin" ? "Macintosh; Intel Mac OS X 10_15_7" : "Windows NT 10.0; Win64; x64"}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
+// 모바일 게이트용 UA(같은 크로미움 엔진 major + Android Mobile). 엔진 일치 유지 = 봇신호 안 됨.
+const MOBILE_UA = `Mozilla/5.0 (Linux; Android 14; SM-S918N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_MAJOR}.0.0.0 Mobile Safari/537.36`;
 
 async function applyAntiDetection(context: BrowserContext) {
   await context.addInitScript(ANTI_DETECTION_SCRIPT);
@@ -833,6 +835,69 @@ export async function crawlCafeArticles(userId: string | undefined, cafeId: stri
   } catch (e) { await browser.close().catch(() => {}); throw e; }
 }
 
+/* ═══════════════ 🚪 유입 게이트 다양화 (referer/URL/디바이스 분산) ═══════════════
+   목적(테리 2026-09-15): 한 글에 검색·카페내부·모바일앱·구글·다음·SNS·직접입력 등 다양한 출처에서
+   유입이 꽂히게 해 네이버에 "여기저기서 인용·공유되는 인기글" 신호를 준다 → 카페 홈판·네이버 모바일
+   메인 추천피드 노출. 방문마다 가중치로 게이트를 뽑아 referer/방문URL/디바이스(PC·모바일)를 다르게 해서
+   통계 유입경로가 사람처럼 여러 갈래로 흩어진다(기존엔 referer 없이 apis URL만 때려 "네이버 카페_앱=apis.naver.com"
+   한 줄로만 찍혀 봇티가 났다). 검색 게이트는 실제 검색페이지를 먼저 방문해 진짜 referrer 체인을 만든다. */
+type GateKind = "naver-search" | "cafe-internal" | "naver-app" | "google" | "daum" | "sns" | "direct";
+interface InflowGate {
+  key: GateKind;
+  label: string;   // 로그·통계 표시(어느 경로로 인용됐는지)
+  weight: number;  // 가중치(사람 유입비율 흉내 + 외부인용 강조)
+  mobile: boolean; // 모바일 디바이스로 방문
+  // referer 생성기(글 제목·카페정보로 동적). undefined면 direct(referer 없음 = 직접입력/북마크).
+  referer?: (c: { subject: string; cafeUrl: string }) => string;
+  // 검색페이지를 실제로 먼저 방문해 진짜 referrer 체인을 만들지(검색류 게이트만).
+  viaSearch?: boolean;
+}
+const enc = (s: string) => encodeURIComponent(s);
+const pickOne = <T,>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
+// 제목에서 검색어처럼 핵심 2~3어절 추출(특수문자 제거, 너무 길지 않게).
+function searchKeyword(subject: string): string {
+  const s = (subject || "").replace(/[\[\]()<>{}"'`…·|·#>]/g, " ").replace(/\s+/g, " ").trim();
+  const w = s.split(" ").filter(Boolean);
+  return (w.slice(0, 3).join(" ") || s).slice(0, 22);
+}
+// 가중치 밸런스(테리 확정): 네이버검색35 / 카페내부20 / 카페앱15 / 구글10 / 외부SNS10 / 다음5 / 직접5
+const INFLOW_GATES: InflowGate[] = [
+  { key: "naver-search", label: "네이버 통합검색(PC)",   weight: 20, mobile: false, viaSearch: true, referer: ({ subject }) => `https://search.naver.com/search.naver?query=${enc(searchKeyword(subject))}` },
+  { key: "naver-search", label: "네이버 통합검색(모바일)", weight: 15, mobile: true,  viaSearch: true, referer: ({ subject }) => `https://m.search.naver.com/search.naver?query=${enc(searchKeyword(subject))}` },
+  { key: "cafe-internal", label: "카페 홈/게시판",        weight: 12, mobile: false, referer: ({ cafeUrl }) => cafeUrl || "https://cafe.naver.com/" },
+  { key: "cafe-internal", label: "카페 내부검색",         weight: 8,  mobile: false, referer: ({ subject }) => `https://cafe.naver.com/ArticleSearchList.nhn?search.query=${enc(searchKeyword(subject))}` },
+  { key: "naver-app",     label: "네이버 카페 앱",        weight: 15, mobile: true,  referer: () => "https://m.cafe.naver.com/" },
+  { key: "google",        label: "구글 검색",             weight: 10, mobile: false, viaSearch: true, referer: ({ subject }) => `https://www.google.com/search?q=${enc(searchKeyword(subject))}` },
+  { key: "sns",           label: "외부 공유(밴드/블로그/카톡)", weight: 10, mobile: true, referer: () => pickOne(["https://band.us/", "https://m.blog.naver.com/", "https://blog.naver.com/", "https://t.co/", "https://l.facebook.com/", "https://cafe.daum.net/"]) },
+  { key: "daum",          label: "다음 검색",             weight: 5,  mobile: false, viaSearch: true, referer: ({ subject }) => `https://search.daum.net/search?q=${enc(searchKeyword(subject))}` },
+  { key: "direct",        label: "직접입력(북마크)",       weight: 5,  mobile: false, referer: undefined },
+];
+function pickGate(): InflowGate {
+  const total = INFLOW_GATES.reduce((a, g) => a + g.weight, 0);
+  let r = Math.random() * total;
+  for (const g of INFLOW_GATES) { if ((r -= g.weight) < 0) return g; }
+  return INFLOW_GATES[0];
+}
+// 방문 URL을 게이트 디바이스에 맞게(모바일이면 m.cafe.naver.com 경로). articleId·cafeId 있으면 표준 형식.
+function gateVisitUrl(pcUrl: string, cafeId: string | undefined, articleId: string | undefined, mobile: boolean): string {
+  if (mobile) {
+    if (cafeId && articleId) return `https://m.cafe.naver.com/ca-fe/web/cafes/${cafeId}/articles/${articleId}`;
+    return pcUrl.replace("https://cafe.naver.com", "https://m.cafe.naver.com");
+  }
+  return pcUrl;
+}
+// 게이트별 방문 컨텍스트(PC/모바일 UA·뷰포트). 방문마다 새 컨텍스트 = 매번 다른 방문자(쿠키 초기화)처럼.
+async function openGateContext(browser: import("playwright").Browser, gate: InflowGate) {
+  const context = await browser.newContext({
+    userAgent: gate.mobile ? MOBILE_UA : UA,
+    viewport: gate.mobile ? { width: 390, height: 844 } : { width: 1280, height: 800 },
+    locale: "ko-KR", timezoneId: "Asia/Seoul",
+    ...(gate.mobile ? { isMobile: true, hasTouch: true, deviceScaleFactor: 3 } : {}),
+  });
+  await applyAntiDetection(context);
+  return context;
+}
+
 // ⑦ 유입 실행 — 각 글을 🔓비로그인(익명)으로 방문·스크롤 체류(조회수). 계정 로그인 안 함 = 보호조치 위험 없음.
 //   randomOrder=true면 매 회차 순서를 섞어 자연스럽게(집중유입이 아니라 랜덤 분산일 때).
 export interface CafeInflowParams {
@@ -846,33 +911,51 @@ export interface CafeInflowParams {
   isCancelled?: () => boolean;
 }
 export async function cafeInflow(p: CafeInflowParams): Promise<{ ok: number; total: number; viewed: number }> {
-  const { articles, dwellSec, repeat, randomOrder = false, showWindow = false, proxySessid, onLog = console.log, onProgress, onBrowser, isCancelled } = p;
-  const { browser, page } = await openAnonCafeContext(showWindow, proxySessid); // 🔓 비로그인 익명 방문
+  const { cafeId, cafeUrl, articles, dwellSec, repeat, randomOrder = false, showWindow = false, proxySessid, onLog = console.log, onProgress, onBrowser, isCancelled } = p;
+  const { browser, page } = await openAnonCafeContext(showWindow, proxySessid); // 🔓 비로그인 익명 방문(browser 재사용, 방문은 게이트별 새 컨텍스트)
   onBrowser?.(browser);
   onLog("[유입] 🔓 비로그인(익명)으로 방문해요 — 계정 로그인 안 하니 보호조치 위험 없어요");
   if (proxySessid !== undefined) {
     try { await page.goto("https://api.ipify.org?format=json", { waitUntil: "domcontentloaded", timeout: 12000 }); const t = await page.evaluate(() => document.body.innerText).catch(() => ""); const ip = (t.match(/"ip"\s*:\s*"([^"]+)"/) || [])[1]; onLog(ip ? `[유입] 🌐 프록시 연결됨 — 나가는 IP: ${ip}` : "[유입] 🌐 프록시 사용(IP 확인 실패)"); }
     catch { onLog("[유입] ⚠️ 프록시 IP 확인 실패 — 계속 진행"); }
   } else onLog("[유입] 🌐 프록시 미사용(내 IP로 방문)");
+  onLog("[유입] 🚪 유입경로 다양화 ON — 검색·카페내부·앱·구글·다음·SNS·직접입력 등으로 흩어서 방문합니다");
+  onLog("[유입] 🎯 목표: 여러 출처에서 '인용·공유'되는 것처럼 보이게 → 카페 홈판·네이버 모바일 메인 추천 노출");
   const total = articles.length * Math.max(1, repeat);
   let done = 0, viewed = 0;
+  const gateCount: Record<string, number> = {}; // 게이트별 유입 집계(끝보고용)
   try {
     for (let r = 0; r < Math.max(1, repeat); r++) {
       const order = randomOrder ? [...articles].sort(() => Math.random() - 0.5) : articles;
       for (const a of order) {
         if (isCancelled?.()) { onLog("[유입] 🛑 취소됨 — 중단"); await browser.close().catch(() => {}); return { ok: viewed, total, viewed }; }
-        onLog(`[유입] (${done + 1}/${total}) 방문: ${a.subject}`);
+        // 🚪 이 방문의 게이트를 가중치로 뽑는다(매번 다른 출처 = 인용 다양성)
+        const gate = pickGate();
+        const ref = gate.referer ? gate.referer({ subject: a.subject, cafeUrl: cafeUrl || "" }) : undefined;
+        const visitUrl = gateVisitUrl(a.url, cafeId, a.articleId, gate.mobile);
+        onLog(`[유입] (${done + 1}/${total}) 🚪${gate.label}${gate.mobile ? "📱" : "🖥️"} → ${a.subject}`);
+        const context = await openGateContext(browser, gate); // 방문마다 새 컨텍스트 = 매번 다른 방문자(쿠키 초기화)
+        const vpage = await context.newPage();
         try {
-          await page.goto(a.url, { waitUntil: "domcontentloaded", timeout: 30000 });
+          // 검색류 게이트는 실제 검색페이지를 먼저 방문해 진짜 referrer 체인을 만든다(referer 헤더 위조보다 안전)
+          if (ref && gate.viaSearch) {
+            try { await vpage.goto(ref, { waitUntil: "domcontentloaded", timeout: 15000 }); await vpage.waitForTimeout(700 + Math.floor(Math.random() * 900)); } catch {}
+          }
+          await vpage.goto(visitUrl, { referer: ref, waitUntil: "domcontentloaded", timeout: 30000 });
           const dwellMs = Math.max(10, dwellSec) * 1000;
           const steps = Math.max(3, Math.floor(dwellSec / 8));
-          for (let s = 0; s < steps; s++) { if (isCancelled?.()) break; await page.mouse.wheel(0, 500 + Math.floor(Math.random() * 400)).catch(() => {}); await page.waitForTimeout(Math.round(dwellMs / steps)); }
+          for (let s = 0; s < steps; s++) { if (isCancelled?.()) break; await vpage.mouse.wheel(0, 500 + Math.floor(Math.random() * 400)).catch(() => {}); await vpage.waitForTimeout(Math.round(dwellMs / steps)); }
           viewed++;
-          onLog(`[유입] ✅ 조회 완료: ${a.subject}`);
-        } catch (e: any) { onLog(`[유입] ⚠️ 방문 실패: ${String(e?.message || e).slice(0, 60)}`); }
+          gateCount[gate.label] = (gateCount[gate.label] || 0) + 1;
+          onLog(`[유입] ✅ 조회 완료 · 유입경로=${gate.label}: ${a.subject}`);
+        } catch (e: any) { onLog(`[유입] ⚠️ 방문 실패(${gate.label}): ${String(e?.message || e).slice(0, 60)}`); }
+        finally { await context.close().catch(() => {}); }
         done++; onProgress?.(done, total);
       }
     }
+    // 끝 보고: 어느 경로로 몇 번 인용·유입됐는지 집계
+    const summary = Object.entries(gateCount).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(" · ");
+    if (summary) onLog(`[유입] 📊 유입경로 분포: ${summary}`);
     await browser.close();
     return { ok: viewed, total, viewed };
   } catch (e) { await browser.close().catch(() => {}); throw e; }
