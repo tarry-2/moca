@@ -1077,7 +1077,9 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
         onLog(`[cafe] [slot ${slot}] 생성 실패: ${msg.slice(0, 80)} → 다음 계정`);
       }
     }
-    if (!flowImages.length) onLog(`[cafe] 🛑 모든 플로우 계정 실패 — 이미지 없이 글만 발행`);
+    // ★이미지 넣기로 했는데(imgCount>0) 한 장도 못 만들면 발행 중단(테리: 이미지 없는 글이 올라가는 것 방지).
+    //   흔한 원인 = Flow 준비(크롬 CDP 연결) 안 함 / 플로우 계정 미연결 / 토큰 소진.
+    if (!flowImages.length) throw new Error(`이미지 생성 실패로 발행 중단 — 이미지 ${imgCount}장을 넣기로 했는데 한 장도 못 만들었어요. 플로우 탭에서 '준비(크롬 연결)'를 먼저 하거나, 이미지 없이 발행하려면 이미지 장수를 0으로 하세요.`);
     else if (flowImages.length < imgCount) onLog(`[cafe] ⚠️ 목표 ${imgCount}장 중 ${flowImages.length}장만 확보(계정 부족) — 있는 만큼 발행`);
     else onLog(`[cafe] ✅ 이미지 ${flowImages.length}장 전부 확보`);
   }

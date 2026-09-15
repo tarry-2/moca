@@ -564,7 +564,8 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
         <label style={stepLabel}>④ 🌈 이미지 자동 생성 (플로우)</label>
         <p style={{ color: "var(--m-sub)", fontSize: 12, margin: "0 0 10px", lineHeight: 1.5 }}>
           발행할 때 플로우(구글 무료)로 이미지를 만들어 본문에 넣어요. 계정 토큰이 소진되면 다음 플로우 계정으로 자동 전환돼요.
-          <b style={{ color: "var(--m-gold)" }}> (0장이면 이미지 없이 글만 발행)</b>
+          <br /><b style={{ color: "var(--m-gold)" }}>📝 0장 = 처음부터 이미지 없이 글만 발행</b>
+          <br /><b style={{ color: "var(--m-log-warn)" }}>⚠️ 1장 이상인데 이미지가 안 만들어지면 발행을 멈춰요</b>(이미지 없는 글이 올라가지 않게). 플로우 탭에서 '준비(크롬 연결)'를 먼저 하세요.
         </p>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ color: "var(--m-sub)", fontSize: 13 }}>이미지 장수:</span>
