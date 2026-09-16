@@ -21,6 +21,15 @@ export interface AccountInput {
   proxy_sessid?: string;
 }
 
+// 로그·화면 표시용 계정명. accId(uuid)를 "네이버아이디(닉네임)"로 바꿔 준다.
+// 목록에 없으면(로드 전 등) id 원문, id 자체가 없으면 "(미선택)".
+export function accountLabel(accounts: CafeAccount[], id?: string): string {
+  if (!id) return "(미선택)";
+  const a = accounts.find((x) => x.id === id);
+  if (!a) return id;
+  return a.nickname ? `${a.naver_id} (${a.nickname})` : a.naver_id;
+}
+
 export async function listAccounts(): Promise<CafeAccount[]> {
   const { data, error } = await supabase
     .from("moca_accounts")

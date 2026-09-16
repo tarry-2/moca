@@ -1291,8 +1291,12 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
       .trim();
     // FAQ: Q앞에 빈 줄(질문 단락 구분), A는 Q 바로 아래
     const faqSpaced = faq ? cleanMd(faq).replace(/\n+(Q\s*\d)/g, "\n\n$1").replace(/\n+(A\s*\d)/g, "\n$1") : "";
+    // ★문단 여백: 본문 줄(문단)들이 카페에서 빈 줄 없이 뭉쳐 보이는 문제(①②③ 항목 등) 해결.
+    //   모든 개행을 문단 경계로 보고 각 문단 사이에 정확히 빈 줄 하나를 넣어 위아래 여백을 준다.
+    //   (본문에만 적용 — FAQ는 Q/A 배치가 의도적이라 위 faqSpaced 규칙을 유지.)
+    const widenParas = (t: string) => t.split(/\n+/).map(s => s.trim()).filter(Boolean).join("\n\n");
     // ★배치: 인사말+본문 → 이미지 → FAQ+해시태그 → 링크(맨끝). 그래서 본문/꼬리 파트를 나눠 입력.
-    const mainText = [greeting, cleanMd(body)].filter(s => s && s.trim()).join("\n\n");
+    const mainText = [greeting, widenParas(cleanMd(body))].filter(s => s && s.trim()).join("\n\n");
     const tailText = [faqSpaced, hashtags].filter(s => s && s.trim()).join("\n\n");
     const bodyText = [mainText, tailText].filter(Boolean).join("\n\n"); // 검증용 합본
 

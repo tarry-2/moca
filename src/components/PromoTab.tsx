@@ -5,7 +5,8 @@
 import { useState, useRef } from "react";
 import { botFetch, BOT_BASE, BotEventStream } from "../lib/botApi";
 import { getGeminiKeys, generateCafePost } from "../lib/gemini";
-import { listFlowAccounts } from "../lib/flowAccounts";
+import { checkPublishGate } from "../lib/flowAccounts";
+import { accountLabel, type CafeAccount } from "../lib/accounts";
 import type { UseLog } from "../lib/useLog";
 
 interface MyCafe { cafeId: string; name: string; url: string; }
@@ -17,10 +18,11 @@ const card: React.CSSProperties = { background: "var(--m-panel)", border: "1px s
 const stepLabel: React.CSSProperties = { color: "var(--m-text)", fontSize: 14, fontWeight: 800, marginBottom: 10, display: "block" };
 const labelStyle: React.CSSProperties = { fontSize: 12, color: "var(--m-sub)", marginBottom: 4, display: "block" };
 
-interface Props { selected: Set<string>; log: UseLog; showWindow: boolean; }
+interface Props { selected: Set<string>; accounts: CafeAccount[]; log: UseLog; showWindow: boolean; }
 
-export default function PromoTab({ selected, log, showWindow }: Props) {
+export default function PromoTab({ selected, accounts, log, showWindow }: Props) {
   const accId = [...selected][0];
+  const accName = accountLabel(accounts, accId); // 로그·화면에 찍을 계정명
   // 카페 목록은 글쓰기 탭이 불러온 것 공유
   const [cafes, setCafes] = useState<MyCafe[]>(() => { try { return JSON.parse(localStorage.getItem("moca_cafes") || "[]"); } catch { return []; } });
   const [pickCafeId, setPickCafeId] = useState("");
@@ -147,10 +149,16 @@ export default function PromoTab({ selected, log, showWindow }: Props) {
     stopRef.current = false; pauseRef.current = false;
     setRunState("running");
     setProg((p) => ({ ...p, total: targets.length, idx: fromIdx, ...(fromIdx === 0 ? { ok: 0, fail: 0 } : {}) }));
+    // 🔴 홍보 전 연결 점검: 네이버 세션 미연결, 또는 이미지 쓰는데 플로우 미연결이면 빨간 경고 후 중단.
+    const gate = await checkPublishGate(accounts.find(a => a.id === accId), accName, imgCount > 0);
+    if (!gate.ok) { log.push(gate.msg, "error", accName); setRunState("idle"); return; }
     log.push(fromIdx === 0 ? `━━ 📢 홍보 시작: ${targets.length}개 카페 (카페 간 ${termMin}분${termRand ? "±랜덤" : ""}) ━━` : `▶ 이어가기: ${fromIdx + 1}번째 카페부터`, "sys");
-    // 이미지용 플로우 계정
-    let flowSlots: number[] = [];
-    if (imgCount > 0) { const fa = await listFlowAccounts().catch(() => []); flowSlots = fa.filter((a: any) => a.connected).map((a: any) => a.slot ?? 0); }
+    if (fromIdx === 0) {
+      log.push(`👤 홍보 계정: ${accName}`, "info", accName);
+      if (imgCount > 0) log.push(`🎨 이미지 계정: ${gate.flowNames} (${gate.flowSlots.length}개 · 소진 시 다음 계정)`, "info", accName);
+    }
+    // 이미지용 플로우 계정(위 게이트에서 확인됨)
+    const flowSlots: number[] = gate.flowSlots;
 
     let ok = prog.ok, fail = prog.fail;
     for (let i = fromIdx; i < targets.length; i++) {
@@ -200,7 +208,7 @@ export default function PromoTab({ selected, log, showWindow }: Props) {
       {/* 계정 */}
       <div style={card}>
         <label style={stepLabel}>① 계정</label>
-        <div style={{ color: accId ? "var(--m-log-success)" : "var(--m-log-warn)", fontSize: 13 }}>{accId ? `✅ 선택됨: ${accId}` : "⚠️ '카페 계정' 탭에서 계정을 선택하세요"}</div>
+        <div style={{ color: accId ? "var(--m-log-success)" : "var(--m-log-warn)", fontSize: 13 }}>{accId ? `✅ 선택됨: ${accName}` : "⚠️ '카페 계정' 탭에서 계정을 선택하세요"}</div>
       </div>
 
       {/* 대상 추가 */}

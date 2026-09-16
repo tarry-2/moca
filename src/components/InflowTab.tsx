@@ -3,6 +3,7 @@
 // 모드2(카테고리 순환·로그인): 계정 로그인 → 카페 → 카테고리 → 기간 → 글 크롤 → 순환 유입(방문은 익명).
 import { useState, useRef } from "react";
 import { botFetch, BOT_BASE, BotEventStream } from "../lib/botApi";
+import { accountLabel, type CafeAccount } from "../lib/accounts";
 import type { UseLog } from "../lib/useLog";
 
 interface MyCafe { cafeId: string; name: string; url: string; }
@@ -22,9 +23,9 @@ const PERIODS = [
   { k: "custom", label: "직접 지정", days: -1 },
 ];
 
-interface Props { selected: Set<string>; log: UseLog; showWindow: boolean; }
+interface Props { selected: Set<string>; accounts: CafeAccount[]; log: UseLog; showWindow: boolean; }
 
-export default function InflowTab({ selected, log, showWindow }: Props) {
+export default function InflowTab({ selected, accounts, log, showWindow }: Props) {
   const [mode, setMode] = useState<"quick" | "category">("quick");
 
   // ── 공통 유입 설정 ──
@@ -80,6 +81,7 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
   const accId = [...selected][0];
+  const accName = accountLabel(accounts, accId); // 로그에 찍을 계정명(모드2 로그인 크롤 시)
   const cafeName = cafes.find((c) => c.cafeId === cafeId)?.name || "";
   const cafeUrl = cafes.find((c) => c.cafeId === cafeId)?.url || "";
   const boardName = boards.find((b) => b.menuId === menuId)?.name || "";
@@ -103,6 +105,7 @@ export default function InflowTab({ selected, log, showWindow }: Props) {
     activeArticlesRef.current = articles; doneRef.current = 0;
     setRunState("running"); setProg({ done: 0, total: articles.length * Math.max(1, repeat) });
     log.push(`━━ 🚦 유입 ${resume ? "이어가기" : "시작"}: ${label} ━━`, "sys");
+    if (mode === "category" && accId) log.push(`👤 로그인 계정(크롤): ${accName}`, "info", accName);
     log.push(`창보기 ${showWindow ? "ON(크롬 창 뜸)" : "OFF(백그라운드)"} · 글당 체류 ${dwellSec}초 · 반복 ${repeat}회 · 프록시 ${useProxy ? "ON" : "OFF"}`, "progress");
     const withProxy = { ...payload, useProxy, proxySessid: proxySessidRef.current };
     const es = new BotEventStream(`${BOT_BASE}/api/cafe/inflow`, {

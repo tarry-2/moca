@@ -2,7 +2,7 @@
 // ⚠️ 퍼블리와 무관한 독립 앱. UI는 카페 전용 새 디자인(커피톤). 퍼블리 UI 이식 금지.
 // 하이브리드 레이아웃: PC=3분할 콘솔형(탭|작업|로그), 모바일=세로 스택(로그 하단).
 // 테마: 다크/라이트 CSS 변수 토글(로그인·대시보드·로그콘솔 전부 연동).
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import LogConsole from "./components/LogConsole";
 import AccountsTab from "./components/AccountsTab";
 import WriteTab from "./components/WriteTab";
@@ -14,6 +14,7 @@ import ManageTab from "./components/ManageTab";
 import PasswordInput from "./components/PasswordInput";
 import { botFetch, BOT_BASE } from "./lib/botApi";
 import { useLog, type UseLog } from "./lib/useLog";
+import { listAccounts, type CafeAccount } from "./lib/accounts";
 
 // 임시 관리자 게이트. TODO(STEP1): Supabase moca_admins 테이블 인증으로 교체.
 const ADMIN_PW = "moca2026";
@@ -181,6 +182,13 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
       else n.add(id);
       return n;
     });
+  // 🔑 계정 목록 단일 소스(App) — 모든 실행탭이 accId(uuid)로 계정명(naver_id)을 로그에 찍을 수 있게 공유.
+  //    AccountsTab에서 추가/수정/삭제하면 onChanged로 여기서 다시 로드 → 방금 바뀐 계정명도 로그에 정확히 반영.
+  const [accounts, setAccounts] = useState<CafeAccount[]>([]);
+  const reloadAccounts = useCallback(async () => {
+    try { setAccounts(await listAccounts()); } catch { /* 오프라인이어도 앱은 뜬다 */ }
+  }, []);
+  useEffect(() => { reloadAccounts(); }, [reloadAccounts]);
 
   return (
     <div style={{ height: "100vh", background: "var(--m-bg)", color: "var(--m-text)", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", display: "flex", flexDirection: "column" }}>
@@ -238,22 +246,22 @@ function Dashboard({ onLogout, theme, onToggleTheme }: { onLogout: () => void; t
           {/* 🔴 탭을 옮겨도 언마운트하지 않는다(상태·진행 유지) — 방문한 탭은 계속 살려두고 display로만 숨김.
               퍼블리 불변 원칙: 탭 이동/화면 내림에도 안 꺼짐(조건부 렌더 금지). */}
           <div style={{ display: tab === "write" ? "block" : "none" }}>
-            <WriteTab selected={selectedAccs} log={writeLog} showWindow={showWindow} />
+            <WriteTab selected={selectedAccs} accounts={accounts} log={writeLog} showWindow={showWindow} />
           </div>
           <div style={{ display: tab === "accounts" ? "block" : "none" }}>
-            <AccountsTab selected={selectedAccs} onToggle={toggleAcc} log={acctLog} />
+            <AccountsTab selected={selectedAccs} onToggle={toggleAcc} log={acctLog} onChanged={reloadAccounts} />
           </div>
           <div style={{ display: tab === "flow" ? "block" : "none" }}>
             <FlowTab log={flowLog} />
           </div>
           <div style={{ display: tab === "inflow" ? "block" : "none" }}>
-            <InflowTab selected={selectedAccs} log={inflowLog} showWindow={showWindow} />
+            <InflowTab selected={selectedAccs} accounts={accounts} log={inflowLog} showWindow={showWindow} />
           </div>
           <div style={{ display: tab === "promo" ? "block" : "none" }}>
-            <PromoTab selected={selectedAccs} log={promoLog} showWindow={showWindow} />
+            <PromoTab selected={selectedAccs} accounts={accounts} log={promoLog} showWindow={showWindow} />
           </div>
           <div style={{ display: tab === "activity" ? "block" : "none" }}>
-            <ActivityTab selected={selectedAccs} log={activityLog} showWindow={showWindow} />
+            <ActivityTab selected={selectedAccs} accounts={accounts} log={activityLog} showWindow={showWindow} />
           </div>
           <div style={{ display: tab === "manage" ? "block" : "none" }}>
             <ManageTab selected={selectedAccs} log={manageLog} />

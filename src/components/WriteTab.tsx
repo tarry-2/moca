@@ -3,7 +3,8 @@
 import { useState, useRef } from "react";
 import { botFetch, BOT_BASE, BotEventStream } from "../lib/botApi";
 import { getGeminiKeys, setGeminiKeys, generateCafePost } from "../lib/gemini";
-import { listFlowAccounts } from "../lib/flowAccounts";
+import { listFlowAccounts, checkPublishGate } from "../lib/flowAccounts";
+import { accountLabel, type CafeAccount } from "../lib/accounts";
 import type { UseLog } from "../lib/useLog";
 
 interface MyCafe { cafeId: string; name: string; url: string; }
@@ -23,11 +24,12 @@ const labelStyle: React.CSSProperties = { fontSize: 12, color: "var(--m-sub)", m
 
 interface Props {
   selected: Set<string>;
+  accounts: CafeAccount[];
   log: UseLog;
   showWindow: boolean;
 }
 
-export default function WriteTab({ selected, log, showWindow: showWindowState }: Props) {
+export default function WriteTab({ selected, accounts, log, showWindow: showWindowState }: Props) {
   // 🔑 Gemini 키 여러 개: 위 키부터 쓰다가 사용량 소진되면 다음 키로 자동 전환
   const [keyInputs, setKeyInputs] = useState<string[]>(() => { const ks = getGeminiKeys(); return ks.length ? ks : [""]; });
   const [keySaved, setKeySaved] = useState(getGeminiKeys().length > 0);
@@ -98,6 +100,7 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
   }
 
   const accId = [...selected][0];
+  const accName = accountLabel(accounts, accId); // 로그에 찍을 계정명(네이버아이디)
   const cafeName = cafes.find((c) => c.cafeId === cafeId)?.name || "";
   const boardName = boards.find((b) => b.menuId === menuId)?.name || "";
 
@@ -228,26 +231,27 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       log.push("계정·카페·게시판·제목·본문을 모두 채워주세요", "warn");
       return;
     }
+    // 🔴 발행 전 연결 점검: 네이버 세션 미연결, 또는 이미지 쓰는데 플로우 미연결이면 빨간 경고 후 중단.
+    const gate = await checkPublishGate(accounts.find(a => a.id === accId), accName, imgCount > 0);
+    if (!gate.ok) { log.push(gate.msg, "error", accName); return; }
     setBusy("publish");
     log.push(`━━ 🚀 발행 시작: [${cafeName}] ${boardName} ━━`, "sys", cafeName);
+    log.push(`👤 작성 계정: ${accName}`, "info", accName);
     log.push(`제목: ${title}`, "info", cafeName);
     // 내 링크(일반 사이트)는 links로, 온파트너는 상품카드(onPartnerProducts)로 분리 전달
     const links = useLink && linkUrl.trim() ? [{ name: linkName.trim() || linkUrl.trim(), url: linkUrl.trim() }] : [];
     const onPartnerProducts = buildOnPartnerProducts();
     if (onPartnerProducts.length) log.push(`온파트너 상품 ${onPartnerProducts.length}개 삽입: ${onPartnerProducts.map((p) => p.name).join(", ")}`, "info", cafeName);
-    // 🌈 이미지: 연결된 플로우 계정 slot 목록(순서대로, 크레딧 소진 시 다음) + 프롬프트 생성
-    let flowSlots: number[] = [];
+    // 🌈 이미지: 위 게이트에서 확인된 연결 플로우 계정 slot 목록(순서대로, 크레딧 소진 시 다음) 사용.
+    const flowSlots: number[] = gate.flowSlots;
     let imgPrompts: string[] = [];
     if (imgCount > 0) {
-      const flowAccts = await listFlowAccounts().catch(() => []);
-      flowSlots = flowAccts.filter(a => a.connected).map(a => a.slot ?? 0);
-      if (!flowSlots.length) log.push("⚠️ 연결된 플로우 계정이 없어 이미지 없이 글만 발행돼요(플로우 탭에서 연결하세요)", "warn", cafeName);
+      log.push(`🎨 이미지 계정: ${gate.flowNames} (${flowSlots.length}개 · 소진 시 다음 계정으로 자동 전환)`, "info", accName);
       // ★이미지 프롬프트 = AI가 만든 영어 프롬프트 사용(Flow는 한글 못 받아 깨짐). 모자라면 영어 기본값.
       imgPrompts = buildImgPrompts(imgCount);
     }
     log.push(`배치: 제목 → 썸네일 → ${useGreeting && savedGreeting ? "인사말 → " : ""}본문(글·이미지 ${imgCount}장 번갈아) → 본문 끝나면 바로 ${faq ? "❓FAQ" : "(FAQ 없음)"}`, "info", cafeName);
     if (links.length) log.push(`링크 삽입: ${links.map(l => l.name).join(", ")}`, "info", cafeName);
-    if (imgCount > 0) log.push(`이미지: 플로우 계정 ${flowSlots.length}개로 ${imgCount}장 생성(소진 시 다음 계정)`, "info", cafeName);
     log.push(`창보기 ${showWindowState ? "ON(크롬 창 뜸)" : "OFF(백그라운드+캡처)"}`, "progress");
     const ok = await runPublishStream({ userId: accId, cafeId, cafeUrl: cafes.find(c => c.cafeId === cafeId)?.url, menuId, title, greeting: useGreeting ? savedGreeting : "", body, links, onPartnerProducts, faq, hashtags, imgCount, imgPrompts, flowSlots, draftOnly, publishOptions: pubOpts, showWindow: showWindowState });
     void ok;
@@ -330,7 +334,14 @@ export default function WriteTab({ selected, log, showWindow: showWindowState }:
       }
     }
 
+    // 🔴 순차 발행 전 연결 점검: 네이버 세션 미연결, 또는 이미지 쓰는데 플로우 미연결이면 빨간 경고 후 중단.
+    const gate = await checkPublishGate(accounts.find(a => a.id === accId), accName, imgCount > 0);
+    if (!gate.ok) { log.push(gate.msg, "error", accName); setRunState("idle"); return; }
     log.push(fromIdx === 0 ? `━━ 🔁 순차 발행 시작: ${kws.length}개 키워드 (간격 ${termMin}분${termRand ? "±랜덤" : ""}) ━━` : `▶ 이어가기: ${fromIdx + 1}번째부터`, "sys", cafeName);
+    if (fromIdx === 0) {
+      log.push(`👤 작성 계정: ${accName} · 카페: ${cafeName || "(미선택)"}`, "info", accName);
+      if (imgCount > 0) log.push(`🎨 이미지 계정: ${gate.flowNames} (${gate.flowSlots.length}개 · 소진 시 다음 계정)`, "info", accName);
+    }
     let ok = seqProg.ok, fail = seqProg.fail;
     for (let i = fromIdx; i < kws.length; i++) {
       if (stopRef.current) { log.push(`🛑 취소됨 (완료 ${ok}·실패 ${fail})`, "warn", cafeName); setRunState("idle"); setWaitInfo(""); return; }

@@ -16,9 +16,10 @@ interface Props {
   selected: Set<string>;
   onToggle: (id: string) => void;
   log: UseLog;
+  onChanged?: () => void; // 계정 추가/수정/삭제 후 App의 계정 목록(로그용 단일 소스)을 다시 로드
 }
 
-export default function AccountsTab({ selected, onToggle, log }: Props) {
+export default function AccountsTab({ selected, onToggle, log, onChanged }: Props) {
   const [accounts, setAccounts] = useState<CafeAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -30,7 +31,7 @@ export default function AccountsTab({ selected, onToggle, log }: Props) {
 
   async function reload() {
     setLoading(true);
-    try { setAccounts(await listAccounts()); setErr(""); }
+    try { setAccounts(await listAccounts()); setErr(""); onChanged?.(); } // App 단일 소스도 함께 갱신(로그 계정명 정확)
     catch (e: any) { setErr("계정 불러오기 실패: " + (e?.message || e)); }
     finally { setLoading(false); }
   }

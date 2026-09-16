@@ -2,6 +2,7 @@
 // ⚠️ 로그인 필요(육성 계정). 과하면 밴 → 소량·사람처럼 천천히·텀. 카페 규정 존중.
 import { useState, useRef } from "react";
 import { botFetch, BOT_BASE, BotEventStream } from "../lib/botApi";
+import { accountLabel, type CafeAccount } from "../lib/accounts";
 import type { UseLog } from "../lib/useLog";
 
 interface MyCafe { cafeId: string; name: string; url: string; }
@@ -15,9 +16,9 @@ const labelStyle: React.CSSProperties = { fontSize: 12, color: "var(--m-sub)", m
 
 const DEFAULT_COMMENTS = ["좋은 정보 감사합니다 :)", "잘 보고 갑니다~", "유익한 글이네요!", "도움 많이 됐어요 감사해요", "오 좋은 글 감사합니다", "잘 읽었습니다 :)"];
 
-interface Props { selected: Set<string>; log: UseLog; showWindow: boolean; }
+interface Props { selected: Set<string>; accounts: CafeAccount[]; log: UseLog; showWindow: boolean; }
 
-export default function ActivityTab({ selected, log, showWindow }: Props) {
+export default function ActivityTab({ selected, accounts, log, showWindow }: Props) {
   const [cafes, setCafes] = useState<MyCafe[]>(() => { try { return JSON.parse(localStorage.getItem("moca_cafes") || "[]"); } catch { return []; } });
   const [cafeId, setCafeId] = useState(() => localStorage.getItem("moca_act_cafeId") || "");
   const [boards, setBoards] = useState<CafeBoard[]>(() => { try { return JSON.parse(localStorage.getItem("moca_act_boards") || "[]"); } catch { return []; } });
@@ -36,6 +37,7 @@ export default function ActivityTab({ selected, log, showWindow }: Props) {
   const streamRef = useRef<BotEventStream | null>(null);
 
   const accId = [...selected][0];
+  const accName = accountLabel(accounts, accId); // 로그에 찍을 육성 계정명
   const cafeName = cafes.find((c) => c.cafeId === cafeId)?.name || "";
   const cafeUrl = cafes.find((c) => c.cafeId === cafeId)?.url || "";
   const boardName = boards.find((b) => b.menuId === menuId)?.name || "";
@@ -87,6 +89,7 @@ export default function ActivityTab({ selected, log, showWindow }: Props) {
     localStorage.setItem("moca_act_cafeId", cafeId); localStorage.setItem("moca_act_menuId", menuId);
     setRunning(true); setProg({ done: 0, total: targets.length });
     log.push(`━━ 💬 활동 시작: ${targets.length}개 글 · ${[doLike && "좋아요", doComment && "댓글", doAttend && "출석"].filter(Boolean).join("·")} ━━`, "sys");
+    log.push(`👤 활동 계정: ${accName}`, "info", accName);
     log.push(`창보기 ${showWindow ? "ON" : "OFF"} · 글 사이 텀 ${termSec}~${termSec + 6}초(사람처럼)`, "progress");
     const commentTexts = commentText.split("\n").map((s) => s.trim()).filter(Boolean);
     const es = new BotEventStream(`${BOT_BASE}/api/cafe/activity`, {
