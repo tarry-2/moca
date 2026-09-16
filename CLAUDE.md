@@ -42,6 +42,7 @@
 - **모든 데이터는 대상(매장/블로그)별로 분리·영속.** 대상 바꾸면 화면 전체 그 데이터로 갱신. 앱 업데이트해도 기록 유지(전부 Supabase). `[[feedback_publy_per_target_data_persist]]`
 - **데이터는 기간 고정 금지** — 7일뿐 아니라 전체·기간설정으로 과거까지 본다.
 - `window.prompt/confirm`은 **Electron에서 안 뜬다** → 커스텀 모달만.
+- 🔴🔴 **봇 창은 항상 작은 창(전체창 금지).** 창 크기는 `naver-bot/src/naver.ts`의 `LAUNCH_ARGS`(WINDOW_W/WINDOW_H, `--window-size`) **단일 소스** 하나뿐. **개별 `chromium.launch`에 `--start-maximized` 절대 붙이지 말 것** — 한 곳만 붙여도 그 기능 경로에서만 전체창으로 회귀한다(테리 여러 번 지적, "수정만 하면 다시 전체창"의 원인). 크기 바꿀 땐 WINDOW_W/H 한 곳만 수정.
 
 ## 4. 회귀 방지 (커밋 전 필수)
 - 수정 후 **타입체크**: 프론트 `npx tsc --noEmit -p tsconfig.json` + 봇 `cd naver-bot && npx tsc --noEmit`.

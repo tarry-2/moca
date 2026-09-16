@@ -138,12 +138,20 @@ const ANTI_DETECTION_SCRIPT = `
   }
 `;
 
+// 🔴🔴 봇 창 크기 = 단일 소스(테리 지시: "트래픽처럼 작게").
+// 여기(LAUNCH_ARGS)에 window-size/position을 박아두면, 어느 launch 진입점이든 자동으로 작은 창으로 뜬다.
+// ⚠️ 개별 launch에 절대 "--start-maximized" 붙이지 말 것 — 한 곳만 붙여도 그 기능 경로에서 전체창으로 회귀한다(반쪽 패치 재발).
+// 창을 크게/작게 조정하려면 아래 WINDOW_W/WINDOW_H 한 곳만 바꾼다.
+const WINDOW_W = 960;
+const WINDOW_H = 720;
 const LAUNCH_ARGS = [
   "--no-sandbox",
   "--disable-blink-features=AutomationControlled",
   "--disable-features=IsolateOrigins,site-per-process",
   "--no-first-run",
   "--no-default-browser-check",
+  `--window-size=${WINDOW_W},${WINDOW_H}`,
+  "--window-position=40,40",
 ];
 
 // UA는 실제 playwright 크로미움 버전·실행 OS와 맞춘다. 불일치(예: Chrome120 UA인데 실제 엔진 148, Windows UA인데 실제 맥)는
@@ -307,7 +315,7 @@ export async function reloginNaverSilent(userId: string, visible = false, sessio
   if (session.pw) { try { pw = Buffer.from(session.pw, "base64").toString("utf-8"); } catch {} }
   if (!pw) { console.log("[naver] 자동재로그인 실패: 저장된 비밀번호 없음"); return false; }
 
-  const browser = await chromium.launch({ headless: !visible, args: visible ? [...LAUNCH_ARGS, "--start-maximized"] : LAUNCH_ARGS });
+  const browser = await chromium.launch({ headless: !visible, args: LAUNCH_ARGS });
   const context = await browser.newContext({ userAgent: UA, viewport: { width: 1280, height: 800 }, locale: "ko-KR", timezoneId: "Asia/Seoul" });
   await applyAntiDetection(context);
   try { if (Array.isArray(session.cookies) && session.cookies.length) await context.addCookies(session.cookies); } catch {}
@@ -474,7 +482,7 @@ async function openCafeContext(userId: string, headed = false) {
   if (!naverSessionExists(userId)) throw new Error("네이버 세션 없음(먼저 계정 로그인)");
   const session = readSession<any>(naverSessionName(userId), LEGACY_SESSION_DIRS);
   const cookies = await ensureLiveSessionNaver(userId, console.log, session);
-  const browser = await chromium.launch({ headless: !headed, args: headed ? [...LAUNCH_ARGS, "--start-maximized"] : LAUNCH_ARGS });
+  const browser = await chromium.launch({ headless: !headed, args: LAUNCH_ARGS });
   const context = await browser.newContext({ userAgent: UA, viewport: { width: 1280, height: 800 }, locale: "ko-KR", timezoneId: "Asia/Seoul" });
   await applyAntiDetection(context);
   await context.addCookies(cookies);
@@ -534,7 +542,7 @@ async function closeCafeBrowserHard(browser: import("playwright").Browser) {
 //   proxySessid 주면 DataImpulse 프록시로 나감(IP 분산/고정). 없으면 로컬 IP.
 async function openAnonCafeContext(headed = false, proxySessid?: string) {
   const proxy = proxySessid !== undefined ? buildProxy(proxySessid) : undefined;
-  const browser = await chromium.launch({ headless: !headed, args: headed ? [...LAUNCH_ARGS, "--start-maximized"] : LAUNCH_ARGS, ...(proxy ? { proxy } : {}) });
+  const browser = await chromium.launch({ headless: !headed, args: LAUNCH_ARGS, ...(proxy ? { proxy } : {}) });
   const context = await browser.newContext({ userAgent: UA, viewport: { width: 1280, height: 800 }, locale: "ko-KR", timezoneId: "Asia/Seoul" });
   await applyAntiDetection(context);
   const page = await context.newPage();
@@ -1189,7 +1197,7 @@ export async function publishCafe(params: PublishCafeParams): Promise<{ url: str
   //   그래서 카페 발행은 항상 실제 창(headed)으로 띄운다. showWindow는 slowMo(사람처럼 천천히)만 제어.
   const browser = await chromium.launch({
     headless: false,
-    args: [...LAUNCH_ARGS, "--start-maximized"],
+    args: LAUNCH_ARGS, // 창 크기는 LAUNCH_ARGS 단일 소스(작은 창). --start-maximized 붙이지 말 것.
     slowMo: showWindow ? 60 : 20,
   });
   onBrowser?.(browser); // ★서버가 이 browser를 잡음 → 취소 시 즉시 close(좀비 방지)
